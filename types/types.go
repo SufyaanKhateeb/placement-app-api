@@ -1,11 +1,26 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
 
 type UserStore interface {
 	GetUserByEmail(email string) (*User, error)
 	GetUserById(id int) (*User, error)
-	CreateUser(User) error
+	CreateUser(User) (int, error)
+}
+
+type AuthService interface {
+	SignJwt(expirationTime time.Duration, claims jwt.MapClaims) (string, error)
+}
+
+type AuthStore interface{}
+
+type LoginUserPayload struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
 }
 
 type RegisterUserPayload struct {

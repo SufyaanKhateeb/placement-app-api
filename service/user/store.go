@@ -60,9 +60,39 @@ func scanRowIntoUser(rows pgx.Rows) (*types.User, error) {
 }
 
 func (s *Store) GetUserById(id int) (*types.User, error) {
-	return nil, nil
+	rows, err := s.db.Query(context.Background(), "select * from users where id = $1", id)
+	if err != nil {
+		return nil, err
+	}
+
+	u := new(types.User)
+	for rows.Next() {
+		u, err = scanRowIntoUser(rows)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if u.Id == 0 {
+		return nil, fmt.Errorf("user not found")
+	}
+
+	return u, nil
 }
 
-func (s *Store) CreateUser(u types.User) error {
-	return nil
+func (s *Store) CreateUser(u types.User) (int, error) {
+	var lastInserId int
+	rows, err := s.db.Query(context.Background(), "insert into users (firstName, lastName, email, password) values ($1,$2,$3,$4) returning id", u.FirstName, u.LastName, u.Email, u.Password)
+	if err != nil {
+		return 0, err
+	}
+
+	// get the id of the created user
+	rows.Next()
+	err = rows.Scan(&lastInserId)
+	if err != nil {
+		return lastInserId, err
+	}
+
+	return lastInserId, nil
 }

@@ -7,14 +7,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestUserServiceHandlers(t *testing.T) {
-	userStore := &mockUserStore{}
-	handler := NewHandler(userStore)
+	userStore := &mockUserStore{UserExists: true}
+	handler := NewHandler(userStore, &mockAuthService{})
 
 	t.Run("should fail if the user payload is invalid", func(t *testing.T) {
 		payload := types.RegisterUserPayload{
@@ -40,6 +42,7 @@ func TestUserServiceHandlers(t *testing.T) {
 		}
 	})
 
+	userStore.UserExists = false
 	t.Run("should create user for valid payload", func(t *testing.T) {
 		payload := types.RegisterUserPayload{
 			FirstName: "fname",
@@ -65,16 +68,30 @@ func TestUserServiceHandlers(t *testing.T) {
 	})
 }
 
-type mockUserStore struct{}
+type mockAuthService struct{}
+
+func (a *mockAuthService) SignJwt(expirationTime time.Duration, claims jwt.MapClaims) (string, error) {
+	return "", nil
+}
+
+type mockUserStore struct {
+	UserExists bool
+}
 
 func (s *mockUserStore) GetUserByEmail(email string) (*types.User, error) {
+	if s.UserExists {
+		return &types.User{}, nil
+	}
 	return nil, fmt.Errorf("user not found")
 }
 
 func (s *mockUserStore) GetUserById(id int) (*types.User, error) {
-	return nil, nil
+	if s.UserExists {
+		return &types.User{}, nil
+	}
+	return nil, fmt.Errorf("user not found")
 }
 
-func (s *mockUserStore) CreateUser(u types.User) error {
-	return nil
+func (s *mockUserStore) CreateUser(u types.User) (int, error) {
+	return 0, nil
 }

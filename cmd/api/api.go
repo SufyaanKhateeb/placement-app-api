@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/user"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -30,7 +31,9 @@ func (s *APIServer) Run() error {
 	subRouter := chi.NewRouter()
 
 	userStore := user.NewStore(s.db)
-	userHandler := user.NewHandler(userStore)
+	authStore := auth.NewAuthStore(s.db)
+	authService := auth.NewAuthService(*authStore)
+	userHandler := user.NewHandler(userStore, authService)
 	userHandler.RegisterRoutes(subRouter)
 
 	r.Mount("/api/v1", subRouter)
