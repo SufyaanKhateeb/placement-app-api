@@ -13,7 +13,8 @@ type UserStore interface {
 }
 
 type AuthService interface {
-	SignJwt(expirationTime time.Duration, claims jwt.MapClaims) (string, error)
+	SignJwt(expirationTime time.Duration, claims CustomClaims) (string, error)
+	VerifyToken(tkn string) (*jwt.Token, error)
 }
 
 type AuthStore interface{}
@@ -37,4 +38,18 @@ type User struct {
 	Email     string    `json:"email"`
 	Password  string    `json:"-"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+type CustomClaims struct {
+	Uid   int    `json:"uid"`
+	UType string `json:"uType"`
+	jwt.RegisteredClaims
+}
+
+type UserDto struct {
+	Id        int    `json:"id"`
+	UType     string `json:"uType"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Email     string `json:"email"`
 }

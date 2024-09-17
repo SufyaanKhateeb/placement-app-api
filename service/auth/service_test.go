@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
+	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -22,8 +23,8 @@ func TestSignJwt(t *testing.T) {
 	type mockAuthStore struct{}
 	mockAuthService := NewAuthService(&mockAuthStore{})
 
-	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), jwt.MapClaims{
-		"uid": 1,
+	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), types.CustomClaims{
+		Uid: 1,
 	})
 	if err != nil {
 		t.Errorf("error creating JWT: %v", err)
@@ -31,6 +32,49 @@ func TestSignJwt(t *testing.T) {
 
 	if token == "" {
 		t.Error("expected token to be not empty")
+	}
+}
+
+func TestVerifyToken(t *testing.T) {
+	pvtKey, pubKey, err := getMockKeys()
+	if err != nil {
+		t.Error("error creating mock keys")
+		return
+	}
+	config.Env.PrivateKey = pvtKey
+	config.Env.PublicKey = pubKey
+
+	type mockAuthStore struct{}
+	mockAuthService := NewAuthService(&mockAuthStore{})
+
+	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), types.CustomClaims{
+		Uid: 1,
+	})
+	if err != nil {
+		t.Errorf("error creating JWT: %v", err)
+	}
+	if token == "" {
+		t.Error("expected token to not be empty")
+	}
+
+	verifiedTkn, err := mockAuthService.VerifyToken("")
+	if err == nil || verifiedTkn != nil {
+		t.Error("expected verification to fail and send error")
+	}
+
+	verifiedTkn, err = mockAuthService.VerifyToken(token)
+	if err != nil {
+		t.Error("error verfifying token")
+	}
+	if verifiedTkn == nil {
+		t.Error("expected verified token to not be empty")
+	}
+	claims, ok := verifiedTkn.Claims.(*types.CustomClaims)
+	if !ok || claims == nil {
+		t.Error("error parsing claims")
+	}
+	if claims.Uid != 1 {
+		t.Error("invalid parsed claims")
 	}
 }
 

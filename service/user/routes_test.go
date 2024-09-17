@@ -70,8 +70,12 @@ func TestUserServiceHandlers(t *testing.T) {
 
 type mockAuthService struct{}
 
-func (a *mockAuthService) SignJwt(expirationTime time.Duration, claims jwt.MapClaims) (string, error) {
+func (a *mockAuthService) SignJwt(expirationTime time.Duration, claims types.CustomClaims) (string, error) {
 	return "", nil
+}
+
+func (a *mockAuthService) VerifyToken(tkn string) (*jwt.Token, error) {
+	return &jwt.Token{}, nil
 }
 
 type mockUserStore struct {

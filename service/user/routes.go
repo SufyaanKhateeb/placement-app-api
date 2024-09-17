@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
+	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 type Handler struct {
@@ -27,13 +27,34 @@ func NewHandler(s types.UserStore, authService types.AuthService) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r *chi.Mux) {
-	r.Post("/login", h.handleLogin)
-	r.Post("/register", h.handleRegister)
-	r.Post("/refresh", h.handleRefresh)
+	// Public Routes
+	r.Group(func(r chi.Router) {
+		r.Post("/login", h.handleLogin)
+		r.Post("/register", h.handleRegister)
+	})
+
+	// Private Routes
+	// Require Authentication
+	r.Group(func(r chi.Router) {
+		r.Use(middlewares.AuthMiddleware(h.AuthService), middlewares.RequireUser)
+		r.Post("/refresh", h.handleRefresh)
+		r.Get("/protected", h.getProtectedData)
+	})
+}
+
+func (h *Handler) getProtectedData(w http.ResponseWriter, r *http.Request) {
+	ctxUser := r.Context().Value("user").(types.UserDto)
+	u, err := h.Store.GetUserById(ctxUser.Id)
+	if err != nil {
+		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid user, user not found"))
+		return
+	}
+	utils.WriteJson(w, http.StatusOK, u)
 }
 
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
-
+	ctxUser := r.Context().Value("user").(types.UserDto)
+	utils.WriteJson(w, http.StatusOK, ctxUser)
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -62,8 +83,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		utils.WriteJsonError(w, http.StatusInternalServerError, err)
 	}
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken)
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken)
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
 
 	utils.WriteJson(w, http.StatusOK, nil)
 }
@@ -120,26 +141,26 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJsonError(w, http.StatusInternalServerError, err)
 		return
 	}
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken)
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken)
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
 
 	utils.WriteJson(w, http.StatusCreated, nil)
 }
 
 func createTokens(authService types.AuthService, u *types.User) (string, string, error) {
 	expirationTime := time.Second * time.Duration(config.Env.JWTExpirationTime)
-	accessToken, err := authService.SignJwt(expirationTime, jwt.MapClaims{
-		"uid":   u.Id,
-		"uType": "",
+	accessToken, err := authService.SignJwt(expirationTime, types.CustomClaims{
+		Uid:   u.Id,
+		UType: "",
 	})
 	if err != nil {
 		return "", "", nil
 	}
 
 	expirationTime = time.Hour * time.Duration(24*30)
-	refreshToken, err := authService.SignJwt(expirationTime, jwt.MapClaims{
-		"uid":   u.Id,
-		"uType": "",
+	refreshToken, err := authService.SignJwt(expirationTime, types.CustomClaims{
+		Uid:   u.Id,
+		UType: "",
 	})
 	if err != nil {
 		return "", "", nil

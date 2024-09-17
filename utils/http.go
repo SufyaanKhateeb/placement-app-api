@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/SufyaanKhateeb/college-placement-app-api/config"
 )
 
 func ParseJson(r *http.Request, payload any) error {
@@ -28,15 +26,14 @@ func WriteJsonError(w http.ResponseWriter, status int, err error) error {
 	return WriteJson(w, status, map[string]string{"error": err.Error()})
 }
 
-func WriteJwtToCookie(w http.ResponseWriter, key string, token string) {
-	expirationTime := time.Second * time.Duration(config.Env.JWTExpirationTime)
-
+func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expirationTime time.Duration) {
 	cookie := &http.Cookie{
 		Name:     key,
 		Value:    token,
 		HttpOnly: true,
 		Expires:  time.Now().Add(expirationTime),
-		MaxAge:   int(expirationTime.Milliseconds()),
+		Path:     "/",
+		MaxAge:   int(expirationTime.Seconds()),
 	}
 
 	http.SetCookie(w, cookie)
