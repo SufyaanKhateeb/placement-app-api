@@ -2,7 +2,6 @@ package middlewares
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -19,13 +18,15 @@ func AuthMiddleware(authService types.AuthService) func(http.Handler) http.Handl
 			if err == nil {
 				token, err := authService.VerifyToken(accessTokenCookie.Value)
 				if err != nil {
-					utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+					// utils.WriteJsonError(w, http.StatusTemporaryRedirect, fmt.Errorf("not authorized"))
+					http.Redirect(w, r, "/login", http.StatusFound)
 					return
 				}
 				var ok bool
 				claims, ok = token.Claims.(*types.CustomClaims)
 				if !ok {
-					utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+					// utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+					http.Redirect(w, r, "/login", http.StatusFound)
 					return
 				}
 			} else {
@@ -33,7 +34,8 @@ func AuthMiddleware(authService types.AuthService) func(http.Handler) http.Handl
 				if err == nil {
 					token, err := authService.VerifyToken(refreshTokenCookie.Value)
 					if err != nil {
-						utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+						// utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+						http.Redirect(w, r, "/login", http.StatusFound)
 						return
 					}
 					var ok bool
@@ -51,11 +53,13 @@ func AuthMiddleware(authService types.AuthService) func(http.Handler) http.Handl
 
 						utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, expirationTime)
 					} else {
-						utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+						// utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+						http.Redirect(w, r, "/login", http.StatusFound)
 						return
 					}
 				} else {
-					utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+					// utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("not authorized"))
+					http.Redirect(w, r, "/login", http.StatusFound)
 					return
 				}
 			}
@@ -73,7 +77,8 @@ func RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user := r.Context().Value("user").(types.UserDto)
 		if user.Id == 0 {
-			utils.WriteJsonError(w, http.StatusForbidden, fmt.Errorf("not authorized"))
+			// utils.WriteJsonError(w, http.StatusForbidden, fmt.Errorf("not authorized"))
+			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 		next.ServeHTTP(w, r)
