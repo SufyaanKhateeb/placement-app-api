@@ -19,6 +19,22 @@ func NewStore(db *pgxpool.Pool) *Store {
 	}
 }
 
+func (s *Store) CheckUserWithEmailExits(email string) (bool, error) {
+	rows, err := s.db.Query(context.Background(), "select exists(select id from users where email = $1)", email)
+	if err != nil {
+		return true, err
+	}
+
+	exists := true
+	for rows.Next() {
+		err = rows.Scan(&exists)
+		if err != nil {
+			return true, err
+		}
+	}
+	return exists, nil
+}
+
 func (s *Store) GetUserByEmail(email string) (*types.User, error) {
 	rows, err := s.db.Query(context.Background(), "select * from users where email = $1", email)
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 )
 
 type UserStore interface {
+	CheckUserWithEmailExits(email string) (bool, error)
 	GetUserByEmail(email string) (*User, error)
 	GetUserById(id int) (*User, error)
 	CreateUser(User) (int, error)
@@ -28,7 +29,7 @@ type RegisterUserPayload struct {
 	FirstName string `json:"firstName" validate:"required"`
 	LastName  string `json:"lastName" validate:"required"`
 	Email     string `json:"email" validate:"required,email"`
-	Password  string `json:"password" validate:"required,min=3,max=130"`
+	Password  string `json:"password" validate:"required,min=8,max=130,password"`
 }
 
 type User struct {

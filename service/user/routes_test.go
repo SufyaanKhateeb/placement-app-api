@@ -48,7 +48,7 @@ func TestUserServiceHandlers(t *testing.T) {
 			FirstName: "fname",
 			LastName:  "lname",
 			Email:     "valid@email.com",
-			Password:  "pass",
+			Password:  "pass@123",
 		}
 		marshalled, _ := json.Marshal(payload)
 		req, err := http.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(marshalled))
@@ -63,7 +63,7 @@ func TestUserServiceHandlers(t *testing.T) {
 		router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusCreated {
-			t.Errorf("expected status code %d, got %d", http.StatusBadRequest, rr.Code)
+			t.Errorf("expected status code %d, got %d", http.StatusCreated, rr.Code)
 		}
 	})
 }
@@ -80,6 +80,13 @@ func (a *mockAuthService) VerifyToken(tkn string) (*jwt.Token, error) {
 
 type mockUserStore struct {
 	UserExists bool
+}
+
+func (s *mockUserStore) CheckUserWithEmailExits(email string) (bool, error) {
+	if s.UserExists {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (s *mockUserStore) GetUserByEmail(email string) (*types.User, error) {

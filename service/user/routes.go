@@ -38,18 +38,23 @@ func (h *Handler) RegisterRoutes(r *chi.Mux) {
 	r.Group(func(r chi.Router) {
 		r.Use(middlewares.AuthMiddleware(h.AuthService), middlewares.RequireUser)
 		r.Post("/refresh", h.handleRefresh)
-		r.Get("/protected", h.getProtectedData)
+		r.Get("/user", h.getUser)
 	})
 }
 
-func (h *Handler) getProtectedData(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	ctxUser := r.Context().Value("user").(types.UserDto)
 	u, err := h.Store.GetUserById(ctxUser.Id)
 	if err != nil {
 		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid user, user not found"))
 		return
 	}
-	utils.WriteJson(w, http.StatusOK, u)
+
+	ctxUser.Email = u.Email
+	ctxUser.FirstName = u.FirstName
+	ctxUser.LastName = u.LastName
+
+	utils.WriteJson(w, http.StatusOK, ctxUser)
 }
 
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +67,12 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var payload types.LoginUserPayload
 	if err := utils.ParseJson(r, &payload); err != nil {
 		utils.WriteJsonError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	if err := utils.GetValidator().Struct(payload); err != nil {
+		errors := err.(validator.ValidationErrors)
+		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
 		return
 	}
 
@@ -98,16 +109,20 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// validate the payload
-	if err := utils.Validate.Struct(payload); err != nil {
+	if err := utils.GetValidator().Struct(payload); err != nil {
 		errors := err.(validator.ValidationErrors)
 		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
 		return
 	}
 
 	// check if the user exists
-	_, err := h.Store.GetUserByEmail(payload.Email)
-	if err == nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("user with email %s already exists", payload.Email))
+	exists, err := h.Store.CheckUserWithEmailExits(payload.Email)
+	if err != nil {
+		utils.WriteJsonError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if exists {
+		utils.WriteJsonError(w, http.StatusInternalServerError, fmt.Errorf("user with email %s already exists", payload.Email))
 		return
 	}
 
