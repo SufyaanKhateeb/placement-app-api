@@ -38,6 +38,7 @@ func (h *Handler) RegisterRoutes(r *chi.Mux) {
 	r.Group(func(r chi.Router) {
 		r.Use(middlewares.AuthMiddleware(h.AuthService), middlewares.RequireUser)
 		r.Post("/refresh", h.handleRefresh)
+		r.Post("/logout", h.handleLogout)
 		r.Get("/user", h.getUser)
 	})
 }
@@ -60,6 +61,20 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	ctxUser := r.Context().Value("user").(types.UserDto)
 	utils.WriteJson(w, http.StatusOK, ctxUser)
+}
+
+func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	ctxUser := r.Context().Value("user").(types.UserDto)
+	_, err := h.Store.GetUserById(ctxUser.Id)
+	if err != nil {
+		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid user, user not found"))
+		return
+	}
+
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", "", time.Duration(0))
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", "", time.Duration(0))
+
+	utils.WriteJson(w, http.StatusAccepted, nil)
 }
 
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +137,7 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if exists {
-		utils.WriteJsonError(w, http.StatusInternalServerError, fmt.Errorf("user with email %s already exists", payload.Email))
+		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("user with email %s already exists", payload.Email))
 		return
 	}
 
