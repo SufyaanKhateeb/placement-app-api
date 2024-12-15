@@ -7,10 +7,19 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/lpernett/godotenv"
 )
 
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
 func main() {
-	m, err := migrate.New("file://cmd/migrate/migrations", "postgres://postgres:Shaks@1991@localhost:5432/placement-app?sslmode=disable")
+	godotenv.Load()
+	m, err := migrate.New("file://cmd/migrate/migrations", getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"))
 	if err != nil {
 		log.Fatal(err)
 	}
