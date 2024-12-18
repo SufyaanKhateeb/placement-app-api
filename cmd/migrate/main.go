@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -32,6 +33,17 @@ func main() {
 	}
 	if cmd == "down" {
 		if err := m.Down(); err != nil && err != migrate.ErrNoChange {
+			log.Fatal(err)
+		}
+	}
+
+	if cmd == "force" {
+		versionStr := os.Args[(len(os.Args) - 2)]
+		version, err := strconv.Atoi(versionStr)
+		if err != nil {
+			log.Fatal("Version provided is not a number")
+		}
+		if err := m.Force(version); err != nil && err != migrate.ErrNoChange {
 			log.Fatal(err)
 		}
 	}
