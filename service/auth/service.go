@@ -44,3 +44,31 @@ func (a *AuthService) VerifyToken(tkn string) (*jwt.Token, error) {
 
 	return token, err
 }
+
+func (a *AuthService) CreateTokens(tokenInput *types.TokenInput) (string, string, error) {
+	expirationTime := time.Second * time.Duration(config.Env.JWTExpirationTime)
+
+	claims := &types.CustomClaims{
+		Id: tokenInput.Id,
+	}
+
+	if len(tokenInput.Type) != 0 {
+		claims.Type = tokenInput.Type
+	}
+	if len(tokenInput.TokenData) != 0 {
+		claims.Type = tokenInput.TokenData
+	}
+
+	accessToken, err := a.SignJwt(expirationTime, *claims)
+	if err != nil {
+		return "", "", nil
+	}
+
+	expirationTime = time.Hour * time.Duration(24*30)
+	refreshToken, err := a.SignJwt(expirationTime, *claims)
+	if err != nil {
+		return "", "", nil
+	}
+
+	return accessToken, refreshToken, nil
+}

@@ -1,10 +1,13 @@
 package utils
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 )
 
 func ParseJson(r *http.Request, payload any) error {
@@ -37,4 +40,12 @@ func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expiratio
 	}
 
 	http.SetCookie(w, cookie)
+}
+
+func GetHttpStatusCodeFromContext(ctx context.Context) int {
+	// default response is internal server error
+	if ctx.Value(types.HttpStatusCodeKey).(int) > 0 {
+		return ctx.Value(types.HttpStatusCodeKey).(int)
+	}
+	return http.StatusInternalServerError
 }

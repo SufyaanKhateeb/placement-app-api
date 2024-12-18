@@ -7,7 +7,6 @@ import (
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
-	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/go-chi/chi/v5"
@@ -15,13 +14,13 @@ import (
 )
 
 type Handler struct {
-	Store       types.UserStore
+	UserService types.UserService
 	AuthService types.AuthService
 }
 
-func NewHandler(s types.UserStore, authService types.AuthService) *Handler {
+func NewHandler(userService types.UserService, authService types.AuthService) *Handler {
 	return &Handler{
-		Store:       s,
+		UserService: userService,
 		AuthService: authService,
 	}
 }
@@ -30,7 +29,15 @@ func (h *Handler) RegisterRoutes(r *chi.Mux) {
 	// Public Routes
 	r.Group(func(r chi.Router) {
 		r.Post("/login", h.handleLogin)
+		r.Post("/login-admin", h.handleAdminLogin)
 		r.Post("/register", h.handleRegister)
+	})
+
+	// Admin Routes
+	// Require Admin Authentication
+	r.Group(func(r chi.Router) {
+		r.Use(middlewares.AuthMiddleware(h.AuthService), middlewares.RequireAdminUser)
+		r.Post("/register-admin", h.handleAdminRegister)
 	})
 
 	// Private Routes
@@ -45,9 +52,9 @@ func (h *Handler) RegisterRoutes(r *chi.Mux) {
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	ctxUser := r.Context().Value("user").(types.UserDto)
-	u, err := h.Store.GetUserById(ctxUser.Id)
+	u, err := h.UserService.GetStudentUserById(r.Context(), ctxUser.Id)
 	if err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid user, user not found"))
+		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid user, user not found"))
 		return
 	}
 
@@ -64,12 +71,14 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	ctxUser := r.Context().Value("user").(types.UserDto)
-	_, err := h.Store.GetUserById(ctxUser.Id)
-	if err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid user, user not found"))
-		return
-	}
+	// Check for valid user not needed but keeping if required later
+	// ctxUser := r.Context().Value("user").(types.UserDto)
+	// _, err1 := h.UserService.GetAdminUserById(r.Context(), ctxUser.Id)
+	// _, err2 := h.UserService.GetStudentUserById(r.Context(), ctxUser.Id)
+	// if err1 != nil && err2 != nil {
+	// 	utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid request"))
+	// 	return
+	// }
 
 	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", "", time.Duration(0))
 	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", "", time.Duration(0))
@@ -85,30 +94,68 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// validate the payload
 	if err := utils.GetValidator().Struct(payload); err != nil {
 		errors := err.(validator.ValidationErrors)
 		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
 		return
 	}
 
-	// get the user using the email
-	u, err := h.Store.GetUserByEmail(payload.Email)
+	// call user service login
+	u, err := h.UserService.LoginStudentUser(r.Context(), &payload)
 	if err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("not found, invalid email or password"))
+		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
 		return
 	}
 
-	// check if password matches hash
-	if err = auth.CompareHashAndPassword(payload.Password, u.Password); err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("not found, invalid email or password"))
+	// create a jwt tokens
+	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
+		Id:   u.Id,
+		Type: "student",
+	})
+	if err != nil {
+		utils.WriteJsonError(w, http.StatusInternalServerError, err)
+	}
+
+	// add the access tokens to the response cookies
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
+
+	utils.WriteJson(w, http.StatusOK, nil)
+}
+
+func (h *Handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	// get the json payload
+	var payload types.LoginUserPayload
+	if err := utils.ParseJson(r, &payload); err != nil {
+		utils.WriteJsonError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	// validate the payload
+	if err := utils.GetValidator().Struct(payload); err != nil {
+		errors := err.(validator.ValidationErrors)
+		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
+		return
+	}
+
+	// call user service admin login
+	u, err := h.UserService.LoginAdminUser(r.Context(), &payload)
+	if err != nil {
+		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
 		return
 	}
 
 	// create a jwt tokens and insert in cookie
-	accessToken, refreshToken, err := createTokens(h.AuthService, u)
+	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
+		Id:   u.Id,
+		Type: "admin",
+	})
 	if err != nil {
 		utils.WriteJsonError(w, http.StatusInternalServerError, err)
 	}
+
+	// add the access tokens to the response cookies
 	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
 	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
 
@@ -130,42 +177,17 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// check if the user exists
-	exists, err := h.Store.CheckUserWithEmailExits(payload.Email)
+	// call user service register
+	u, err := h.UserService.RegisterStudentUser(r.Context(), &payload)
 	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if exists {
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("user with email %s already exists", payload.Email))
-		return
-	}
-
-	// create a new user
-	hashedPassword, err := auth.HashPassword(payload.Password)
-
-	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	id, err := h.Store.CreateUser(types.User{
-		FirstName: payload.FirstName,
-		LastName:  payload.LastName,
-		Email:     payload.Email,
-		Password:  hashedPassword,
-	})
-	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
+		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
 		return
 	}
 
 	// create a jwt access token and insert in cookie
-	accessToken, refreshToken, err := createTokens(h.AuthService, &types.User{
-		Id:        id,
-		FirstName: payload.FirstName,
-		LastName:  payload.LastName,
-		Email:     payload.Email,
+	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
+		Id:   u.Id,
+		Type: "student",
 	})
 	if err != nil {
 		utils.WriteJsonError(w, http.StatusInternalServerError, err)
@@ -177,24 +199,43 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJson(w, http.StatusCreated, nil)
 }
 
-func createTokens(authService types.AuthService, u *types.User) (string, string, error) {
-	expirationTime := time.Second * time.Duration(config.Env.JWTExpirationTime)
-	accessToken, err := authService.SignJwt(expirationTime, types.CustomClaims{
-		Uid:   u.Id,
-		UType: "",
-	})
-	if err != nil {
-		return "", "", nil
+func (h *Handler) handleAdminRegister(w http.ResponseWriter, r *http.Request) {
+	// Can be called only by admin user
+	// Check is done in the middleware token check
+	// TODO: Provide a way to register admin user using access-secret only avaiable to admins
+
+	// get the json payload
+	var payload types.RegisterUserPayload
+	if err := utils.ParseJson(r, &payload); err != nil {
+		utils.WriteJsonError(w, http.StatusBadRequest, err)
+		return
 	}
 
-	expirationTime = time.Hour * time.Duration(24*30)
-	refreshToken, err := authService.SignJwt(expirationTime, types.CustomClaims{
-		Uid:   u.Id,
-		UType: "",
-	})
-	if err != nil {
-		return "", "", nil
+	// validate the payload
+	if err := utils.GetValidator().Struct(payload); err != nil {
+		errors := err.(validator.ValidationErrors)
+		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
+		return
 	}
 
-	return accessToken, refreshToken, nil
+	// call user service admin register
+	u, err := h.UserService.RegisterAdminUser(r.Context(), &payload)
+	if err != nil {
+		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
+		return
+	}
+
+	// create a jwt access token and insert in cookie
+	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
+		Id:   u.Id,
+		Type: "admin",
+	})
+	if err != nil {
+		utils.WriteJsonError(w, http.StatusInternalServerError, err)
+		return
+	}
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
+
+	utils.WriteJson(w, http.StatusCreated, nil)
 }

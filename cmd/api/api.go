@@ -42,8 +42,9 @@ func (s *APIServer) Run() error {
 
 	userStore := user.NewStore(s.db)
 	authStore := auth.NewAuthStore(s.db)
+	userService := user.NewUserService(userStore)
 	authService := auth.NewAuthService(*authStore)
-	userHandler := user.NewHandler(userStore, authService)
+	userHandler := user.NewHandler(userService, authService)
 	userHandler.RegisterRoutes(subRouter)
 
 	r.Mount("/api/v1", subRouter)
