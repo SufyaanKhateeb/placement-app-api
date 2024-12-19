@@ -32,8 +32,22 @@ func InitConfig() {
 	}
 }
 
-func InitConfigWith(config Config) {
-	Env = config
+func InitConfigWith(envFileNames ...string) {
+	if len(envFileNames) == 0 {
+		panic("Atleast one environment file name is required")
+	}
+	err := godotenv.Load(envFileNames...)
+	if err != nil {
+		panic(err)
+	}
+
+	Env = Config{
+		DbUrl:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
+		Port:              getEnv("PORT", "8090"),
+		JWTExpirationTime: getEnvAsInt("JWT_EXPIRATION_TIME", 60*5),
+		PrivateKey:        loadPrivateKey(getEnv("PRIVATE_KEY_PATH", "./private.key")),
+		PublicKey:         loadPublicKey(getEnv("PUBLIC_KEY_PATH", "./public.key")),
+	}
 }
 
 func getRequiredEnv(key string) string {

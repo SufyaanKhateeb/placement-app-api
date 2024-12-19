@@ -3,20 +3,23 @@ package user
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/config"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/user/mocks"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/go-chi/chi/v5"
-	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestUserServiceHandlers(t *testing.T) {
-	userStore := &mockUserStore{UserExists: true}
-	handler := NewHandler(userStore, &mockAuthService{})
+	userStore := mocks.MockUserStore{UserExists: true}
+	userService := NewUserService(&userStore)
+	authService := auth.NewAuthService(&mocks.MockAuthStore{})
+	handler := NewHandler(userService, authService)
+	config.InitConfigWith("../../test.env")
 
 	t.Run("should fail if the user payload is invalid", func(t *testing.T) {
 		payload := types.RegisterUserPayload{
@@ -66,43 +69,4 @@ func TestUserServiceHandlers(t *testing.T) {
 			t.Errorf("expected status code %d, got %d", http.StatusCreated, rr.Code)
 		}
 	})
-}
-
-type mockAuthService struct{}
-
-func (a *mockAuthService) SignJwt(expirationTime time.Duration, claims types.CustomClaims) (string, error) {
-	return "", nil
-}
-
-func (a *mockAuthService) VerifyToken(tkn string) (*jwt.Token, error) {
-	return &jwt.Token{}, nil
-}
-
-type mockUserStore struct {
-	UserExists bool
-}
-
-func (s *mockUserStore) CheckUserWithEmailExits(email string) (bool, error) {
-	if s.UserExists {
-		return true, nil
-	}
-	return false, nil
-}
-
-func (s *mockUserStore) GetUserByEmail(email string) (*types.User, error) {
-	if s.UserExists {
-		return &types.User{}, nil
-	}
-	return nil, fmt.Errorf("user not found")
-}
-
-func (s *mockUserStore) GetUserById(id int) (*types.User, error) {
-	if s.UserExists {
-		return &types.User{}, nil
-	}
-	return nil, fmt.Errorf("user not found")
-}
-
-func (s *mockUserStore) CreateUser(u types.User) (int, error) {
-	return 0, nil
 }

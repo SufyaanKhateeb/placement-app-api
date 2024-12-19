@@ -24,7 +24,7 @@ func TestSignJwt(t *testing.T) {
 	mockAuthService := NewAuthService(&mockAuthStore{})
 
 	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), types.CustomClaims{
-		Uid: 1,
+		Id: 1,
 	})
 	if err != nil {
 		t.Errorf("error creating JWT: %v", err)
@@ -48,7 +48,7 @@ func TestVerifyToken(t *testing.T) {
 	mockAuthService := NewAuthService(&mockAuthStore{})
 
 	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), types.CustomClaims{
-		Uid: 1,
+		Id: 1,
 	})
 	if err != nil {
 		t.Errorf("error creating JWT: %v", err)
@@ -73,7 +73,7 @@ func TestVerifyToken(t *testing.T) {
 	if !ok || claims == nil {
 		t.Error("error parsing claims")
 	}
-	if claims.Uid != 1 {
+	if claims.Id != 1 {
 		t.Error("invalid parsed claims")
 	}
 }
