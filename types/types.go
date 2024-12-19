@@ -8,8 +8,8 @@ import (
 )
 
 type UserStore interface {
-	CheckUserWithEmailExits(email string) (bool, error)
-	CheckAdminUserWithEmailExits(email string) (bool, error)
+	CheckUserWithEmailExists(email string) (bool, error)
+	CheckAdminUserWithEmailExists(email string) (bool, error)
 	GetUserByEmail(email string) (*User, error)
 	GetAdminUserByEmail(email string) (*AdminUser, error)
 	GetUserById(id int) (*User, error)

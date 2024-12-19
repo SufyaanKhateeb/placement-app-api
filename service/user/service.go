@@ -91,7 +91,7 @@ func (us *UserService) LoginAdminUser(ctx context.Context, payload *types.LoginU
 
 func (us *UserService) RegisterStudentUser(ctx context.Context, payload *types.RegisterUserPayload) (*types.User, error) {
 	// check if the user exists
-	exists, err := us.Store.CheckUserWithEmailExits(payload.Email)
+	exists, err := us.Store.CheckUserWithEmailExists(payload.Email)
 	if err != nil {
 		context.WithValue(ctx, types.HttpStatusCodeKey, http.StatusInternalServerError)
 		return nil, err
@@ -129,7 +129,7 @@ func (us *UserService) RegisterStudentUser(ctx context.Context, payload *types.R
 
 func (us *UserService) RegisterAdminUser(ctx context.Context, payload *types.RegisterUserPayload) (*types.AdminUser, error) {
 	// check if the user exists
-	exists, err := us.Store.CheckAdminUserWithEmailExits(payload.Email)
+	exists, err := us.Store.CheckAdminUserWithEmailExists(payload.Email)
 	if err != nil {
 		context.WithValue(ctx, types.HttpStatusCodeKey, http.StatusInternalServerError)
 		return nil, err
