@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
+	"github.com/SufyaanKhateeb/college-placement-app-api/contextKeys"
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
@@ -51,23 +52,42 @@ func (h *Handler) RegisterRoutes(r *chi.Mux) {
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
-	ctxUser := r.Context().Value("user").(types.UserDto)
-	u, err := h.UserService.GetStudentUserById(r.Context(), ctxUser.Id)
+	tokenInput := r.Context().Value(contextKeys.TokenInputKey).(types.TokenInput)
+	u, err := h.UserService.GetStudentUserById(r.Context(), tokenInput.Id)
 	if err != nil {
 		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid user, user not found"))
 		return
 	}
 
-	ctxUser.Email = u.Email
-	ctxUser.FirstName = u.FirstName
-	ctxUser.LastName = u.LastName
-
-	utils.WriteJson(w, http.StatusOK, ctxUser)
+	utils.WriteJson(w, http.StatusOK, types.UserDto{
+		Id:        u.Id,
+		UType:     tokenInput.Type,
+		FirstName: u.FirstName,
+		LastName:  u.LastName,
+		Email:     u.Email,
+		Verified:  u.Verified,
+	})
 }
 
 func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	ctxUser := r.Context().Value("user").(types.UserDto)
-	utils.WriteJson(w, http.StatusOK, ctxUser)
+	if tokenInput, ok := r.Context().Value(contextKeys.TokenInputKey).(types.TokenInput); ok {
+		u, err := h.UserService.GetStudentUserById(r.Context(), tokenInput.Id)
+		if err != nil {
+			utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid user, user not found"))
+			return
+		}
+
+		utils.WriteJson(w, http.StatusOK, types.UserDto{
+			Id:        u.Id,
+			UType:     tokenInput.Type,
+			FirstName: u.FirstName,
+			LastName:  u.LastName,
+			Email:     u.Email,
+			Verified:  u.Verified,
+		})
+		return
+	}
+	utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {

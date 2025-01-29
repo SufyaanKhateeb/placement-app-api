@@ -44,8 +44,8 @@ func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expiratio
 
 func GetHttpStatusCodeFromContext(ctx context.Context) int {
 	// default response is internal server error
-	if ctx.Value(types.HttpStatusCodeKey).(int) > 0 {
-		return ctx.Value(types.HttpStatusCodeKey).(int)
+	if status, ok := ctx.Value(types.HttpStatusCodeKey).(int); ok && status > 0 {
+		return status
 	}
 	return http.StatusInternalServerError
 }
