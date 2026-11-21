@@ -55,7 +55,7 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	tokenInput := r.Context().Value(contextKeys.TokenInputKey).(types.TokenInput)
 	u, err := h.UserService.GetStudentUserById(r.Context(), tokenInput.Id)
 	if err != nil {
-		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid user, user not found"))
+		utils.WriteJsonError(w, err.StatusCode, err.Err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if tokenInput, ok := r.Context().Value(contextKeys.TokenInputKey).(types.TokenInput); ok {
 		u, err := h.UserService.GetStudentUserById(r.Context(), tokenInput.Id)
 		if err != nil {
-			utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid user, user not found"))
+			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
 		}
 
@@ -122,9 +122,9 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call user service login
-	u, err := h.UserService.LoginStudentUser(r.Context(), &payload)
-	if err != nil {
-		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
+	u, serviceErr := h.UserService.LoginStudentUser(r.Context(), &payload)
+	if serviceErr != nil {
+		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
 		return
 	}
 
@@ -160,9 +160,9 @@ func (h *Handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call user service admin login
-	u, err := h.UserService.LoginAdminUser(r.Context(), &payload)
-	if err != nil {
-		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
+	u, serviceErr := h.UserService.LoginAdminUser(r.Context(), &payload)
+	if serviceErr != nil {
+		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
 		return
 	}
 
@@ -198,9 +198,9 @@ func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call user service register
-	u, err := h.UserService.RegisterStudentUser(r.Context(), &payload)
-	if err != nil {
-		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
+	u, serviceErr := h.UserService.RegisterStudentUser(r.Context(), &payload)
+	if serviceErr != nil {
+		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
 		return
 	}
 
@@ -239,9 +239,9 @@ func (h *Handler) handleAdminRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// call user service admin register
-	u, err := h.UserService.RegisterAdminUser(r.Context(), &payload)
-	if err != nil {
-		utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), err)
+	u, serviceErr := h.UserService.RegisterAdminUser(r.Context(), &payload)
+	if serviceErr != nil {
+		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
 		return
 	}
 

@@ -36,6 +36,7 @@ func InitConfigWith(envFileNames ...string) {
 	if len(envFileNames) == 0 {
 		panic("Atleast one environment file name is required")
 	}
+
 	err := godotenv.Load(envFileNames...)
 	if err != nil {
 		panic(err)

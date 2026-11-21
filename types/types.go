@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/service"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -19,14 +20,14 @@ type UserStore interface {
 }
 
 type UserService interface {
-	GetStudentUserById(ctx context.Context, uid int) (*User, error)
-	GetAdminUserById(ctx context.Context, uid int) (*AdminUser, error)
-	GetStudentUserByEmail(ctx context.Context, emailId string) (*User, error)
-	GetAdminUserByEmail(ctx context.Context, emailId string) (*AdminUser, error)
-	LoginStudentUser(ctx context.Context, payload *LoginUserPayload) (*User, error)
-	LoginAdminUser(ctx context.Context, payload *LoginUserPayload) (*AdminUser, error)
-	RegisterStudentUser(ctx context.Context, payload *RegisterUserPayload) (*User, error)
-	RegisterAdminUser(ctx context.Context, payload *RegisterUserPayload) (*AdminUser, error)
+	GetStudentUserById(ctx context.Context, uid int) (*User, *service.ServiceError)
+	GetAdminUserById(ctx context.Context, uid int) (*AdminUser, *service.ServiceError)
+	GetStudentUserByEmail(ctx context.Context, emailId string) (*User, *service.ServiceError)
+	GetAdminUserByEmail(ctx context.Context, emailId string) (*AdminUser, *service.ServiceError)
+	LoginStudentUser(ctx context.Context, payload *LoginUserPayload) (*User, *service.ServiceError)
+	LoginAdminUser(ctx context.Context, payload *LoginUserPayload) (*AdminUser, *service.ServiceError)
+	RegisterStudentUser(ctx context.Context, payload *RegisterUserPayload) (*User, *service.ServiceError)
+	RegisterAdminUser(ctx context.Context, payload *RegisterUserPayload) (*AdminUser, *service.ServiceError)
 }
 
 type AuthService interface {
@@ -91,7 +92,3 @@ type UserDto struct {
 	Email     string `json:"email"`
 	Verified  bool   `json:"verified"`
 }
-
-type httpStatusCodeKeyType string
-
-const HttpStatusCodeKey httpStatusCodeKeyType = "httpStatusCode"
