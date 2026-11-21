@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/forms"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/user"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,6 +17,7 @@ import (
 func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSignIn) http.Handler {
 	mux := http.NewServeMux()
 	google.RegisterRoutes(mux)
+	forms.RegisterRoutes(mux, db, &auth.AuthService{}, frontendOrigin)
 	userService := user.NewUserService(user.NewStore(db))
 	authService := &auth.AuthService{}
 	user.NewHandler(userService, authService).RegisterRoutes(mux, "/api/v1")

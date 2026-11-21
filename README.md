@@ -42,3 +42,10 @@ The `/api/v1/user` and `/api/v1/refresh` responses include a canonical `role` of
 2. Pause the old API before applying `go run ./cmd/migrate up`. The old API queries the original table names.
 3. Start the new API with the existing JWT signing keys. Check registration, password and Google sign-in, and admin access.
 4. If rollback is necessary and the current migration is still `20261121200000`, stop the API and run `go run ./cmd/migrate down-one`, then restart the previous API. The previous API may prompt users with newly issued `user` tokens to sign in again.
+## Form builder
+
+Apply migration `20261121210000` before running the form builder API. Signed-in admins manage shared drafts at `/admin/forms`. Signed-in users can browse published forms at `/forms`.
+
+Saves and publish requests include the revision the admin reviewed. A stale revision returns HTTP 409. Publishing preserves the previous snapshot and commits the new active version with the revision change. The admin preview checks sample values without saving a submission. Decimal values are passed as strings to preserve precision.
+
+The active published version is available to signed-in users. Per-form eligibility, attribute mapping, and submission are separate features.
