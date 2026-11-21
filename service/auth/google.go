@@ -236,7 +236,7 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 	g.sessionCookie(w, "ACCESS_TOKEN", access, time.Duration(config.Env.JWTExpirationTime)*time.Second)
 	g.sessionCookie(w, "REFRESH_TOKEN", refresh, 30*24*time.Hour)
 	destination := "/"
-	if account.Type == "admin" {
+	if account.Type == types.RoleAdmin {
 		destination = "/admin"
 	}
 	http.Redirect(w, r, g.frontend+destination, http.StatusSeeOther)

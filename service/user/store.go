@@ -20,7 +20,7 @@ func NewStore(db *pgxpool.Pool) *Store {
 }
 
 func (s *Store) CheckUserWithEmailExists(email string) (bool, error) {
-	rows, err := s.db.Query(context.Background(), "select exists(select id from student_user where email = $1)", email)
+	rows, err := s.db.Query(context.Background(), "select exists(select id from app_user where email = $1)", email)
 	if err != nil {
 		return true, err
 	}
@@ -52,7 +52,7 @@ func (s *Store) CheckAdminUserWithEmailExists(email string) (bool, error) {
 }
 
 func (s *Store) GetUserByEmail(email string) (*types.User, error) {
-	rows, err := s.db.Query(context.Background(), "select * from student_user where email = $1", email)
+	rows, err := s.db.Query(context.Background(), "select * from app_user where email = $1", email)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func scanRowIntoAdminUser(rows pgx.Rows) (*types.AdminUser, error) {
 }
 
 func (s *Store) GetUserById(id int) (*types.User, error) {
-	rows, err := s.db.Query(context.Background(), "select * from student_user where id = $1", id)
+	rows, err := s.db.Query(context.Background(), "select * from app_user where id = $1", id)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (s *Store) GetAdminById(id int) (*types.AdminUser, error) {
 
 func (s *Store) CreateUser(u types.User) (int, error) {
 	var lastInserId int
-	rows, err := s.db.Query(context.Background(), "insert into student_user (firstName, lastName, email, password) values ($1,$2,$3,$4) returning id", u.FirstName, u.LastName, u.Email, u.Password)
+	rows, err := s.db.Query(context.Background(), "insert into app_user (firstName, lastName, email, password) values ($1,$2,$3,$4) returning id", u.FirstName, u.LastName, u.Email, u.Password)
 	if err != nil {
 		return 0, err
 	}

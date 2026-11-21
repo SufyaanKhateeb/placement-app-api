@@ -33,7 +33,7 @@ func (s *Store) FindGoogleAdmin(ctx context.Context, identity auth.GoogleIdentit
 	if errors.Is(err, pgx.ErrNoRows) {
 		return types.TokenInput{}, auth.ErrGoogleAdminUnlinked
 	}
-	session.Type = "admin"
+	session.Type = types.RoleAdmin
 	return session, err
 }
 

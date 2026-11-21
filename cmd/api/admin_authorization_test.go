@@ -34,7 +34,7 @@ func TestRegularSessionCannotUseAdminRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, refresh, err := sessions.CreateTokens(&types.TokenInput{Id: 7, Type: "student"})
+	access, refresh, err := sessions.CreateTokens(&types.TokenInput{Id: 7, Type: types.RoleUser})
 	if err != nil {
 		t.Fatal(err)
 	}

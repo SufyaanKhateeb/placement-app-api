@@ -8,6 +8,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+const (
+	RoleUser          = "user"
+	RoleAdmin         = "admin"
+	LegacyRoleStudent = "student"
+)
+
 type UserStore interface {
 	CheckUserWithEmailExists(email string) (bool, error)
 	CheckAdminUserWithEmailExists(email string) (bool, error)
@@ -20,13 +26,13 @@ type UserStore interface {
 }
 
 type UserService interface {
-	GetStudentUserById(ctx context.Context, uid int) (*User, *service.ServiceError)
+	GetUserById(ctx context.Context, uid int) (*User, *service.ServiceError)
 	GetAdminUserById(ctx context.Context, uid int) (*AdminUser, *service.ServiceError)
-	GetStudentUserByEmail(ctx context.Context, emailId string) (*User, *service.ServiceError)
+	GetUserByEmail(ctx context.Context, emailId string) (*User, *service.ServiceError)
 	GetAdminUserByEmail(ctx context.Context, emailId string) (*AdminUser, *service.ServiceError)
-	LoginStudentUser(ctx context.Context, payload *LoginUserPayload) (*User, *service.ServiceError)
+	LoginUser(ctx context.Context, payload *LoginUserPayload) (*User, *service.ServiceError)
 	LoginAdminUser(ctx context.Context, payload *LoginUserPayload) (*AdminUser, *service.ServiceError)
-	RegisterStudentUser(ctx context.Context, payload *RegisterUserPayload) (*User, *service.ServiceError)
+	RegisterUser(ctx context.Context, payload *RegisterUserPayload) (*User, *service.ServiceError)
 	RegisterAdminUser(ctx context.Context, payload *RegisterUserPayload) (*AdminUser, *service.ServiceError)
 }
 
@@ -84,6 +90,7 @@ type CustomClaims struct {
 
 type UserDto struct {
 	Id        int    `json:"id"`
+	Role      string `json:"role"`
 	UType     string `json:"uType"`
 	FirstName string `json:"firstName"`
 	LastName  string `json:"lastName"`

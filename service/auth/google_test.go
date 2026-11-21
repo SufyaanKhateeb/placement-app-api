@@ -25,7 +25,7 @@ type googleTestStore struct {
 
 func (s *googleTestStore) ResolveGoogleAccount(_ context.Context, identity GoogleIdentity) (types.TokenInput, error) {
 	s.identity = identity
-	return types.TokenInput{Id: 7, Type: "student"}, s.err
+	return types.TokenInput{Id: 7, Type: types.RoleUser}, s.err
 }
 
 type googleTestSessions struct{ types.AuthService }

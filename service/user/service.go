@@ -20,7 +20,7 @@ func NewUserService(store types.UserStore) *UserService {
 	}
 }
 
-func (us *UserService) GetStudentUserById(ctx context.Context, uid int) (*types.User, *service.ServiceError) {
+func (us *UserService) GetUserById(ctx context.Context, uid int) (*types.User, *service.ServiceError) {
 	user, err := us.Store.GetUserById(uid)
 	if err != nil {
 		return nil, &service.ServiceError{Err: fmt.Errorf("invalid user, user not found"), StatusCode: http.StatusBadRequest}
@@ -36,7 +36,7 @@ func (us *UserService) GetAdminUserById(ctx context.Context, uid int) (*types.Ad
 	return user, nil
 }
 
-func (us *UserService) GetStudentUserByEmail(ctx context.Context, emailId string) (*types.User, *service.ServiceError) {
+func (us *UserService) GetUserByEmail(ctx context.Context, emailId string) (*types.User, *service.ServiceError) {
 	user, err := us.Store.GetUserByEmail(emailId)
 	if err != nil {
 		return nil, &service.ServiceError{Err: fmt.Errorf("invalid user, user not found"), StatusCode: http.StatusBadRequest}
@@ -52,7 +52,7 @@ func (us *UserService) GetAdminUserByEmail(ctx context.Context, emailId string) 
 	return user, nil
 }
 
-func (us *UserService) LoginStudentUser(ctx context.Context, payload *types.LoginUserPayload) (*types.User, *service.ServiceError) {
+func (us *UserService) LoginUser(ctx context.Context, payload *types.LoginUserPayload) (*types.User, *service.ServiceError) {
 	// get the user using the email
 	u, err := us.Store.GetUserByEmail(payload.Email)
 	if err != nil {
@@ -82,7 +82,7 @@ func (us *UserService) LoginAdminUser(ctx context.Context, payload *types.LoginU
 	return u, nil
 }
 
-func (us *UserService) RegisterStudentUser(ctx context.Context, payload *types.RegisterUserPayload) (*types.User, *service.ServiceError) {
+func (us *UserService) RegisterUser(ctx context.Context, payload *types.RegisterUserPayload) (*types.User, *service.ServiceError) {
 	// check if the user exists
 	exists, err := us.Store.CheckUserWithEmailExists(payload.Email)
 	if err != nil {

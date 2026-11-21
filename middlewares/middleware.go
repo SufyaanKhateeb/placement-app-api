@@ -37,13 +37,22 @@ func Authenticate(auth types.AuthService, requiredRole string) func(http.Handler
 				return
 			}
 			claims, ok := token.Claims.(*types.CustomClaims)
-			if !ok || claims.Id <= 0 || (claims.Type != "student" && claims.Type != "admin") ||
-				(requiredRole != "" && claims.Type != requiredRole) {
+			if !ok || claims.Id <= 0 {
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+			role := claims.Type
+			if role == types.LegacyRoleStudent {
+				role = types.RoleUser
+			}
+			if (role != types.RoleUser && role != types.RoleAdmin) ||
+				(requiredRole != "" && role != requiredRole) {
 				http.Redirect(w, r, "/login", http.StatusFound)
 				return
 			}
 			if refresh {
 				lifetime := time.Duration(config.Env.JWTExpirationTime) * time.Second
+				claims.Type = role
 				access, err := auth.SignJwt(lifetime, *claims)
 				if err != nil {
 					utils.WriteJsonError(w, http.StatusInternalServerError, errors.New("could not refresh session"))
@@ -52,7 +61,7 @@ func Authenticate(auth types.AuthService, requiredRole string) func(http.Handler
 				utils.WriteJwtToCookie(w, "ACCESS_TOKEN", access, lifetime)
 			}
 
-			session := types.TokenInput{Id: claims.Id, Type: claims.Type, TokenData: claims.TokenData}
+			session := types.TokenInput{Id: claims.Id, Type: role, TokenData: claims.TokenData}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, session)))
 		})
 	}

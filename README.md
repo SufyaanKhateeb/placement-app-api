@@ -30,3 +30,15 @@ Register a Google OAuth web client with the exact API redirect URI, for example:
 
 Apply the database migration before enabling Google sign-in. A first Google sign-in creates a regular app account when the email is unused. An existing account is never matched by email alone. Linking existing accounts and provisioning Google admin identities are separate workflows.
 Admins can sign in at `/admin/login` with their existing password. On the admin account page, confirm the current password and connect a Google account with the same verified email. Future visits to `/admin/login` support Google sign-in for that linked identity. An identity already connected to another account cannot be reused for admin access.
+## Generic user migration
+
+Migration `20261121200000` renames the account and verification tables and the OIDC user reference in place. Account IDs, Google identities, verification rows, and foreign keys are preserved. New regular-user JWTs use the `user` role. Existing signed `student` tokens are accepted as regular sessions and refreshed access tokens use `user`. Admin access checks are unchanged.
+
+The `/api/v1/user` and `/api/v1/refresh` responses include a canonical `role` of `user` or `admin`. They retain `uType` as a compatibility field for existing clients. The updated frontend also reads profiles from older API builds.
+
+### Rollout
+
+1. Confirm the database is on migration `20261121190000`, with a clean migration state, and deploy the updated frontend.
+2. Pause the old API before applying `go run ./cmd/migrate up`. The old API queries the original table names.
+3. Start the new API with the existing JWT signing keys. Check registration, password and Google sign-in, and admin access.
+4. If rollback is necessary and the current migration is still `20261121200000`, stop the API and run `go run ./cmd/migrate down-one`, then restart the previous API. The previous API may prompt users with newly issued `user` tokens to sign in again.

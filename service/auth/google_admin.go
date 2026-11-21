@@ -63,7 +63,7 @@ func (g *GoogleSignIn) activeAdminID(r *http.Request) (int, bool) {
 		return 0, false
 	}
 	claims, ok := token.Claims.(*types.CustomClaims)
-	if !ok || claims.Id <= 0 || claims.Type != "admin" {
+	if !ok || claims.Id <= 0 || claims.Type != types.RoleAdmin {
 		return 0, false
 	}
 	return claims.Id, true

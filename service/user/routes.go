@@ -23,13 +23,13 @@ func NewHandler(users types.UserService, auth types.AuthService) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc("POST "+prefix+"/login", h.login("student"))
-	mux.HandleFunc("POST "+prefix+"/login-admin", h.login("admin"))
-	mux.HandleFunc("POST "+prefix+"/register", h.register("student"))
+	mux.HandleFunc("POST "+prefix+"/login", h.login(types.RoleUser))
+	mux.HandleFunc("POST "+prefix+"/login-admin", h.login(types.RoleAdmin))
+	mux.HandleFunc("POST "+prefix+"/register", h.register(types.RoleUser))
 
 	authenticate := middlewares.Authenticate(h.AuthService, "")
-	adminOnly := middlewares.Authenticate(h.AuthService, "admin")
-	mux.Handle("POST "+prefix+"/register-admin", adminOnly(h.register("admin")))
+	adminOnly := middlewares.Authenticate(h.AuthService, types.RoleAdmin)
+	mux.Handle("POST "+prefix+"/register-admin", adminOnly(h.register(types.RoleAdmin)))
 	mux.Handle("POST "+prefix+"/refresh", authenticate(h.profile))
 	mux.Handle("POST "+prefix+"/logout", authenticate(h.logout))
 	mux.Handle("GET "+prefix+"/user", authenticate(h.profile))
@@ -42,8 +42,11 @@ func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile := types.UserDto{UType: session.Type}
-	if session.Type == "admin" {
+	profile := types.UserDto{Role: session.Type, UType: session.Type}
+	if session.Type == types.RoleUser {
+		profile.UType = types.LegacyRoleStudent
+	}
+	if session.Type == types.RoleAdmin {
 		user, err := h.UserService.GetAdminUserById(r.Context(), session.Id)
 		if err != nil {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
@@ -51,7 +54,7 @@ func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 		}
 		profile.Id, profile.FirstName, profile.LastName, profile.Email = user.Id, user.FirstName, user.LastName, user.Email
 	} else {
-		user, err := h.UserService.GetStudentUserById(r.Context(), session.Id)
+		user, err := h.UserService.GetUserById(r.Context(), session.Id)
 		if err != nil {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
@@ -78,7 +81,7 @@ func (h *Handler) login(role string) http.HandlerFunc {
 			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("a valid email and password are required"))
 			return
 		}
-		if role == "admin" {
+		if role == types.RoleAdmin {
 			user, err := h.UserService.LoginAdminUser(r.Context(), &payload)
 			if err != nil {
 				utils.WriteJsonError(w, err.StatusCode, err.Err)
@@ -87,7 +90,7 @@ func (h *Handler) login(role string) http.HandlerFunc {
 			h.startSession(w, http.StatusOK, role, user.Id)
 			return
 		}
-		user, err := h.UserService.LoginStudentUser(r.Context(), &payload)
+		user, err := h.UserService.LoginUser(r.Context(), &payload)
 		if err != nil {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
@@ -116,7 +119,7 @@ func (h *Handler) register(role string) http.HandlerFunc {
 			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("password must have at least 8 characters, at most 72 bytes, and include a letter, digit, and special character"))
 			return
 		}
-		if role == "admin" {
+		if role == types.RoleAdmin {
 			user, err := h.UserService.RegisterAdminUser(r.Context(), &payload)
 			if err != nil {
 				utils.WriteJsonError(w, err.StatusCode, err.Err)
@@ -125,7 +128,7 @@ func (h *Handler) register(role string) http.HandlerFunc {
 			h.startSession(w, http.StatusCreated, role, user.Id)
 			return
 		}
-		user, err := h.UserService.RegisterStudentUser(r.Context(), &payload)
+		user, err := h.UserService.RegisterUser(r.Context(), &payload)
 		if err != nil {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return

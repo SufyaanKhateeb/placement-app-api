@@ -25,8 +25,8 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 
 	var account types.TokenInput
 	err = tx.QueryRow(ctx, `
-		SELECT COALESCE(student_id, admin_id),
-		       CASE WHEN admin_id IS NULL THEN 'student' ELSE 'admin' END
+		SELECT COALESCE(user_id, admin_id),
+		       CASE WHEN admin_id IS NULL THEN 'user' ELSE 'admin' END
 		FROM oidc_identity WHERE issuer = $1 AND subject = $2
 	`, identity.Issuer, identity.Subject).Scan(&account.Id, &account.Type)
 	if err == nil {
@@ -37,11 +37,11 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 	}
 
 	// Google can create regular accounts. Existing accounts require explicit linking.
-	account.Type = "student"
+	account.Type = types.RoleUser
 	err = tx.QueryRow(ctx, `
-		INSERT INTO student_user (firstname, lastname, email, password)
+		INSERT INTO app_user (firstname, lastname, email, password)
 		SELECT $1, $2, $3::text, ''
-		WHERE NOT EXISTS (SELECT 1 FROM student_user WHERE lower(email) = $3)
+		WHERE NOT EXISTS (SELECT 1 FROM app_user WHERE lower(email) = $3)
 		  AND NOT EXISTS (SELECT 1 FROM admin_user WHERE lower(email) = $3)
 		ON CONFLICT (email) DO NOTHING
 		RETURNING id
@@ -53,7 +53,7 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 		return types.TokenInput{}, err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO oidc_identity (issuer, subject, student_id) VALUES ($1, $2, $3)
+		INSERT INTO oidc_identity (issuer, subject, user_id) VALUES ($1, $2, $3)
 	`, identity.Issuer, identity.Subject, account.Id); err != nil {
 		return types.TokenInput{}, err
 	}

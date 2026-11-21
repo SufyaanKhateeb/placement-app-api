@@ -48,7 +48,7 @@ func TestStartAdminGoogleLinkRequiresPasswordAndSession(t *testing.T) {
 		status                          int
 	}{
 		{"cross-origin request", "https://other.example.com", "admin", "test-password", http.StatusForbidden},
-		{"student session", g.frontend, "student", "test-password", http.StatusUnauthorized},
+		{"regular user session", g.frontend, types.RoleUser, "test-password", http.StatusUnauthorized},
 		{"wrong password", g.frontend, "admin", "wrong", http.StatusForbidden},
 		{"confirmed admin password", g.frontend, "admin", "test-password", http.StatusOK},
 	} {
@@ -91,10 +91,10 @@ func TestAdminGoogleCallbackRejectsTamperedFlowOrChangedAccount(t *testing.T) {
 			t.Fatal("tampered flow was accepted")
 		}
 	})
-	t.Run("callback with a student session", func(t *testing.T) {
+	t.Run("callback with a regular user session", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/google/callback?code=code&state=state", nil)
 		req.AddCookie(g.flowCookie(valid, 60))
-		req.AddCookie(&http.Cookie{Name: "ACCESS_TOKEN", Value: "student"})
+		req.AddCookie(&http.Cookie{Name: "ACCESS_TOKEN", Value: types.RoleUser})
 		res := httptest.NewRecorder()
 		g.callback(res, req)
 		if res.Header().Get("Location") != g.frontend+"/admin/login?error=google_admin_session_expired" {
