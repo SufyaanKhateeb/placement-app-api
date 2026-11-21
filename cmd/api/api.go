@@ -13,8 +13,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func newHandler(db *pgxpool.Pool, frontendOrigin string) http.Handler {
+func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSignIn) http.Handler {
 	mux := http.NewServeMux()
+	google.RegisterRoutes(mux)
 	userService := user.NewUserService(user.NewStore(db))
 	authService := &auth.AuthService{}
 	user.NewHandler(userService, authService).RegisterRoutes(mux, "/api/v1")
@@ -30,9 +31,13 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string) http.Handler {
 }
 
 func Run(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {
+	google, err := auth.NewGoogleSignIn(ctx, user.NewStore(db), &auth.AuthService{}, frontendOrigin)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(db, frontendOrigin),
+		Handler:           newHandler(db, frontendOrigin, google),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

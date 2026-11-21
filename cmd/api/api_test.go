@@ -8,7 +8,7 @@ import (
 
 func TestHTTPRouting(t *testing.T) {
 	const origin = "http://localhost:5173"
-	handler := newHandler(nil, origin)
+	handler := newHandler(nil, origin, nil)
 
 	t.Run("protected route requires a session", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/user", nil)

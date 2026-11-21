@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -19,10 +20,15 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
+	godotenv.Load(".env.local")
 	godotenv.Load()
-	m, err := migrate.New("file://cmd/migrate/migrations", getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"))
+	databaseURL := os.Getenv("MIGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = getEnv("DATABASE_URL_UNPOOLED", getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"))
+	}
+	m, err := migrate.New("file://cmd/migrate/migrations", databaseURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(strings.ReplaceAll(err.Error(), databaseURL, "[database URL redacted]"))
 	}
 
 	cmd := os.Args[(len(os.Args) - 1)]

@@ -22,6 +22,7 @@ type Config struct {
 var Env Config = Config{}
 
 func InitConfig() {
+	godotenv.Load(".env.local")
 	godotenv.Load()
 
 	Env = Config{
