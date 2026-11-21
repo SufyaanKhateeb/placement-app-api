@@ -10,7 +10,7 @@ import (
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
-	"github.com/go-chi/chi/v5"
+
 	"github.com/go-playground/validator/v10"
 )
 
@@ -26,29 +26,16 @@ func NewHandler(userService types.UserService, authService types.AuthService) *H
 	}
 }
 
-func (h *Handler) RegisterRoutes(r *chi.Mux) {
-	// Public Routes
-	r.Group(func(r chi.Router) {
-		r.Post("/login", h.handleLogin)
-		r.Post("/login-admin", h.handleAdminLogin)
-		r.Post("/register", h.handleRegister)
-	})
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
+	mux.HandleFunc("POST "+prefix+"/login", h.handleLogin)
+	mux.HandleFunc("POST "+prefix+"/login-admin", h.handleAdminLogin)
+	mux.HandleFunc("POST "+prefix+"/register", h.handleRegister)
 
-	// Admin Routes
-	// Require Admin Authentication
-	r.Group(func(r chi.Router) {
-		r.Use(middlewares.AuthMiddleware(h.AuthService), middlewares.RequireAdminUser)
-		r.Post("/register-admin", h.handleAdminRegister)
-	})
-
-	// Private Routes
-	// Require Authentication
-	r.Group(func(r chi.Router) {
-		r.Use(middlewares.AuthMiddleware(h.AuthService), middlewares.RequireUser)
-		r.Post("/refresh", h.handleRefresh)
-		r.Post("/logout", h.handleLogout)
-		r.Get("/user", h.getUser)
-	})
+	authenticate := middlewares.AuthMiddleware(h.AuthService)
+	mux.Handle("POST "+prefix+"/register-admin", authenticate(middlewares.RequireAdminUser(http.HandlerFunc(h.handleAdminRegister))))
+	mux.Handle("POST "+prefix+"/refresh", authenticate(middlewares.RequireUser(http.HandlerFunc(h.handleRefresh))))
+	mux.Handle("POST "+prefix+"/logout", authenticate(middlewares.RequireUser(http.HandlerFunc(h.handleLogout))))
+	mux.Handle("GET "+prefix+"/user", authenticate(middlewares.RequireUser(http.HandlerFunc(h.getUser))))
 }
 
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {

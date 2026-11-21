@@ -13,6 +13,7 @@ import (
 type Config struct {
 	DbUrl             string
 	Port              string
+	FrontendOrigin    string
 	JWTExpirationTime int64
 	PrivateKey        *rsa.PrivateKey
 	PublicKey         *rsa.PublicKey
@@ -26,6 +27,7 @@ func InitConfig() {
 	Env = Config{
 		DbUrl:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
 		Port:              getEnv("PORT", "8090"),
+		FrontendOrigin:    getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
 		JWTExpirationTime: getEnvAsInt("JWT_EXPIRATION_TIME", 60*5),
 		PrivateKey:        loadPrivateKey(getEnv("PRIVATE_KEY_PATH", "./private.key")),
 		PublicKey:         loadPublicKey(getEnv("PUBLIC_KEY_PATH", "./public.key")),
@@ -45,6 +47,7 @@ func InitConfigWith(envFileNames ...string) {
 	Env = Config{
 		DbUrl:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
 		Port:              getEnv("PORT", "8090"),
+		FrontendOrigin:    getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
 		JWTExpirationTime: getEnvAsInt("JWT_EXPIRATION_TIME", 60*5),
 		PrivateKey:        loadPrivateKey(getEnv("PRIVATE_KEY_PATH", "./private.key")),
 		PublicKey:         loadPublicKey(getEnv("PUBLIC_KEY_PATH", "./public.key")),

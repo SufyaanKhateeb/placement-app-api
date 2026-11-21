@@ -11,7 +11,6 @@ import (
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/user/mocks"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
-	"github.com/go-chi/chi/v5"
 )
 
 func TestUserServiceHandlers(t *testing.T) {
@@ -35,9 +34,9 @@ func TestUserServiceHandlers(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		router := chi.NewRouter()
+		router := http.NewServeMux()
 
-		router.Post("/register", handler.handleRegister)
+		handler.RegisterRoutes(router, "")
 		router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusBadRequest {
@@ -60,9 +59,9 @@ func TestUserServiceHandlers(t *testing.T) {
 		}
 
 		rr := httptest.NewRecorder()
-		router := chi.NewRouter()
+		router := http.NewServeMux()
 
-		router.Post("/register", handler.handleRegister)
+		handler.RegisterRoutes(router, "")
 		router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusCreated {

@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/cmd/api"
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
@@ -10,23 +15,28 @@ import (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx); err != nil {
+		slog.Error("API stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
 	config.InitConfig()
-	dbpool, err := db.NewDbPool(config.Env.DbUrl)
-
+	pool, err := db.NewDbPool(config.Env.DbUrl)
 	if err != nil {
-		log.Fatal(err)
-	} else {
-		err := dbpool.Ping(context.Background())
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Println("Successfully connected to database")
+		return fmt.Errorf("initialize database pool: %w", err)
 	}
+	defer pool.Close()
 
-	defer dbpool.Close()
-
-	server := api.NewAPIServer(":"+config.Env.Port, dbpool)
-	if err := server.Run(); err != nil {
-		log.Fatal(err)
+	startup, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err = pool.Ping(startup)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
 	}
+	slog.Info("Connected to PostgreSQL")
+	return api.Run(ctx, ":"+config.Env.Port, pool, config.Env.FrontendOrigin)
 }
