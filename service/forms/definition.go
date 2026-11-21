@@ -3,6 +3,7 @@ package forms
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,10 +12,11 @@ import (
 )
 
 type Field struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Type     string `json:"type"`
-	Required bool   `json:"required"`
+	ID       string      `json:"id"`
+	Label    string      `json:"label"`
+	Type     string      `json:"type"`
+	Required bool        `json:"required"`
+	Rules    *FieldRules `json:"rules,omitempty"`
 }
 
 type Definition struct {
@@ -53,6 +55,17 @@ func (d *Definition) validate() error {
 		default:
 			return errors.New("each field needs a supported type")
 		}
+		if field.Rules != nil {
+			rules := *field.Rules
+			if err := rules.validateFor(field.Type); err != nil {
+				return fmt.Errorf("%s: %w", field.Label, err)
+			}
+			if rules.empty() {
+				field.Rules = nil
+			} else {
+				field.Rules = &rules
+			}
+		}
 	}
 	return nil
 }
@@ -69,6 +82,12 @@ func (d Definition) validateValues(values map[string]json.RawMessage) map[string
 		}
 		if !validFieldValue(field.Type, value) {
 			problems[field.ID] = "Enter a valid " + field.Type + " value."
+			continue
+		}
+		if field.Rules != nil {
+			if message := field.Rules.answerError(field.Type, value); message != "" {
+				problems[field.ID] = message
+			}
 		}
 	}
 	return problems
@@ -91,7 +110,7 @@ func validFieldValue(fieldType string, raw json.RawMessage) bool {
 	case "text":
 		return strings.TrimSpace(value) != "" && utf8.RuneCountInString(value) <= 4000
 	case "numeric":
-		return len(value) <= 100 && decimalPattern.MatchString(value)
+		return validDecimal(value)
 	case "date":
 		date, err := time.Parse(time.DateOnly, value)
 		return err == nil && date.Year() >= 1

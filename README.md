@@ -49,3 +49,4 @@ Apply migration `20261121210000` before running the form builder API. Signed-in 
 Saves and publish requests include the revision the admin reviewed. A stale revision returns HTTP 409. Publishing preserves the previous snapshot and commits the new active version with the revision change. The admin preview checks sample values without saving a submission. Decimal values are passed as strings to preserve precision.
 
 The active published version is available to signed-in users. Per-form eligibility, attribute mapping, and submission are separate features.
+Field validation rules are part of the draft and each published snapshot. Text fields can set character limits and a Go regex pattern. Whole numbers, precise decimals, dates, and timestamps can set inclusive bounds. Timestamp bounds are stored with an offset, and the editor displays them in the administrator's local time zone. Existing forms without rules continue to use required and type validation.
