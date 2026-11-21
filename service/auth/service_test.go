@@ -20,8 +20,7 @@ func TestSignJwt(t *testing.T) {
 	config.Env.PrivateKey = pvtKey
 	config.Env.PublicKey = pubKey
 
-	type mockAuthStore struct{}
-	mockAuthService := NewAuthService(&mockAuthStore{})
+	mockAuthService := &AuthService{}
 
 	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), types.CustomClaims{
 		Id: 1,
@@ -44,8 +43,7 @@ func TestVerifyToken(t *testing.T) {
 	config.Env.PrivateKey = pvtKey
 	config.Env.PublicKey = pubKey
 
-	type mockAuthStore struct{}
-	mockAuthService := NewAuthService(&mockAuthStore{})
+	mockAuthService := &AuthService{}
 
 	token, err := mockAuthService.SignJwt(time.Second*time.Duration(5), types.CustomClaims{
 		Id: 1,

@@ -16,7 +16,7 @@ import (
 func TestUserServiceHandlers(t *testing.T) {
 	userStore := mocks.MockUserStore{UserExists: true}
 	userService := NewUserService(&userStore)
-	authService := auth.NewAuthService(&mocks.MockAuthStore{})
+	authService := &auth.AuthService{}
 	handler := NewHandler(userService, authService)
 	config.InitConfigWith("../../test.env")
 

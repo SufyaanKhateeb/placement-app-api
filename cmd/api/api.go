@@ -16,7 +16,7 @@ import (
 func newHandler(db *pgxpool.Pool, frontendOrigin string) http.Handler {
 	mux := http.NewServeMux()
 	userService := user.NewUserService(user.NewStore(db))
-	authService := auth.NewAuthService(*auth.NewAuthStore(db))
+	authService := &auth.AuthService{}
 	user.NewHandler(userService, authService).RegisterRoutes(mux, "/api/v1")
 
 	return cors.Handler(cors.Options{

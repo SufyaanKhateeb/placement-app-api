@@ -36,5 +36,8 @@ func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expiratio
 		MaxAge:   int(expirationTime.Seconds()),
 	}
 
+	if expirationTime <= 0 {
+		cookie.MaxAge = -1
+	}
 	http.SetCookie(w, cookie)
 }

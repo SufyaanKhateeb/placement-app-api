@@ -1,17 +1,16 @@
 package user
 
 import (
-	"fmt"
+	"errors"
 	"net/http"
+	"net/mail"
+	"regexp"
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
-	"github.com/SufyaanKhateeb/college-placement-app-api/contextKeys"
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
-
-	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
@@ -19,230 +18,143 @@ type Handler struct {
 	AuthService types.AuthService
 }
 
-func NewHandler(userService types.UserService, authService types.AuthService) *Handler {
-	return &Handler{
-		UserService: userService,
-		AuthService: authService,
-	}
+func NewHandler(users types.UserService, auth types.AuthService) *Handler {
+	return &Handler{UserService: users, AuthService: auth}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	mux.HandleFunc("POST "+prefix+"/login", h.handleLogin)
-	mux.HandleFunc("POST "+prefix+"/login-admin", h.handleAdminLogin)
-	mux.HandleFunc("POST "+prefix+"/register", h.handleRegister)
+	mux.HandleFunc("POST "+prefix+"/login", h.login("student"))
+	mux.HandleFunc("POST "+prefix+"/login-admin", h.login("admin"))
+	mux.HandleFunc("POST "+prefix+"/register", h.register("student"))
 
-	authenticate := middlewares.AuthMiddleware(h.AuthService)
-	mux.Handle("POST "+prefix+"/register-admin", authenticate(middlewares.RequireAdminUser(http.HandlerFunc(h.handleAdminRegister))))
-	mux.Handle("POST "+prefix+"/refresh", authenticate(middlewares.RequireUser(http.HandlerFunc(h.handleRefresh))))
-	mux.Handle("POST "+prefix+"/logout", authenticate(middlewares.RequireUser(http.HandlerFunc(h.handleLogout))))
-	mux.Handle("GET "+prefix+"/user", authenticate(middlewares.RequireUser(http.HandlerFunc(h.getUser))))
+	authenticate := middlewares.Authenticate(h.AuthService, "")
+	adminOnly := middlewares.Authenticate(h.AuthService, "admin")
+	mux.Handle("POST "+prefix+"/register-admin", adminOnly(h.register("admin")))
+	mux.Handle("POST "+prefix+"/refresh", authenticate(h.profile))
+	mux.Handle("POST "+prefix+"/logout", authenticate(h.logout))
+	mux.Handle("GET "+prefix+"/user", authenticate(h.profile))
 }
 
-func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
-	tokenInput := r.Context().Value(contextKeys.TokenInputKey).(types.TokenInput)
-	u, err := h.UserService.GetStudentUserById(r.Context(), tokenInput.Id)
-	if err != nil {
-		utils.WriteJsonError(w, err.StatusCode, err.Err)
+func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
+	session, ok := middlewares.Session(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
 
-	utils.WriteJson(w, http.StatusOK, types.UserDto{
-		Id:        u.Id,
-		UType:     tokenInput.Type,
-		FirstName: u.FirstName,
-		LastName:  u.LastName,
-		Email:     u.Email,
-		Verified:  u.Verified,
-	})
-}
-
-func (h *Handler) handleRefresh(w http.ResponseWriter, r *http.Request) {
-	if tokenInput, ok := r.Context().Value(contextKeys.TokenInputKey).(types.TokenInput); ok {
-		u, err := h.UserService.GetStudentUserById(r.Context(), tokenInput.Id)
+	profile := types.UserDto{UType: session.Type}
+	if session.Type == "admin" {
+		user, err := h.UserService.GetAdminUserById(r.Context(), session.Id)
 		if err != nil {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
 		}
-
-		utils.WriteJson(w, http.StatusOK, types.UserDto{
-			Id:        u.Id,
-			UType:     tokenInput.Type,
-			FirstName: u.FirstName,
-			LastName:  u.LastName,
-			Email:     u.Email,
-			Verified:  u.Verified,
-		})
-		return
+		profile.Id, profile.FirstName, profile.LastName, profile.Email = user.Id, user.FirstName, user.LastName, user.Email
+	} else {
+		user, err := h.UserService.GetStudentUserById(r.Context(), session.Id)
+		if err != nil {
+			utils.WriteJsonError(w, err.StatusCode, err.Err)
+			return
+		}
+		profile.Id, profile.FirstName, profile.LastName, profile.Email = user.Id, user.FirstName, user.LastName, user.Email
+		profile.Verified = user.Verified
 	}
-	utils.WriteJsonError(w, http.StatusUnauthorized, fmt.Errorf("Unauthorized"))
+	utils.WriteJson(w, http.StatusOK, profile)
 }
 
-func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	// Check for valid user not needed but keeping if required later
-	// ctxUser := r.Context().Value("user").(types.UserDto)
-	// _, err1 := h.UserService.GetAdminUserById(r.Context(), ctxUser.Id)
-	// _, err2 := h.UserService.GetStudentUserById(r.Context(), ctxUser.Id)
-	// if err1 != nil && err2 != nil {
-	// 	utils.WriteJsonError(w, utils.GetHttpStatusCodeFromContext(r.Context()), fmt.Errorf("invalid request"))
-	// 	return
-	// }
-
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", "", time.Duration(0))
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", "", time.Duration(0))
-
+func (h *Handler) logout(w http.ResponseWriter, _ *http.Request) {
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", "", 0)
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", "", 0)
 	utils.WriteJson(w, http.StatusAccepted, nil)
 }
 
-func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	// get the json payload
-	var payload types.LoginUserPayload
-	if err := utils.ParseJson(r, &payload); err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, err)
-		return
+func (h *Handler) login(role string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var payload types.LoginUserPayload
+		if !readPayload(w, r, &payload) {
+			return
+		}
+		if !validEmail(payload.Email) || payload.Password == "" {
+			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("a valid email and password are required"))
+			return
+		}
+		if role == "admin" {
+			user, err := h.UserService.LoginAdminUser(r.Context(), &payload)
+			if err != nil {
+				utils.WriteJsonError(w, err.StatusCode, err.Err)
+				return
+			}
+			h.startSession(w, http.StatusOK, role, user.Id)
+			return
+		}
+		user, err := h.UserService.LoginStudentUser(r.Context(), &payload)
+		if err != nil {
+			utils.WriteJsonError(w, err.StatusCode, err.Err)
+			return
+		}
+		h.startSession(w, http.StatusOK, role, user.Id)
 	}
-
-	// validate the payload
-	if err := utils.GetValidator().Struct(payload); err != nil {
-		errors := err.(validator.ValidationErrors)
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
-		return
-	}
-
-	// call user service login
-	u, serviceErr := h.UserService.LoginStudentUser(r.Context(), &payload)
-	if serviceErr != nil {
-		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
-		return
-	}
-
-	// create a jwt tokens
-	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
-		Id:   u.Id,
-		Type: "student",
-	})
-	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
-	}
-
-	// add the access tokens to the response cookies
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
-
-	utils.WriteJson(w, http.StatusOK, nil)
 }
 
-func (h *Handler) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
-	// get the json payload
-	var payload types.LoginUserPayload
-	if err := utils.ParseJson(r, &payload); err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, err)
-		return
+var passwordLetter = regexp.MustCompile("[a-zA-Z]")
+var passwordDigit = regexp.MustCompile("[0-9]")
+var passwordSpecial = regexp.MustCompile(`[!@#$%^&*(),.?":{}|<>]`)
+
+func (h *Handler) register(role string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var payload types.RegisterUserPayload
+		if !readPayload(w, r, &payload) {
+			return
+		}
+		if payload.FirstName == "" || payload.LastName == "" || !validEmail(payload.Email) {
+			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("first name, last name, and a valid email are required"))
+			return
+		}
+		password := payload.Password
+		if len([]rune(password)) < 8 || len(password) > 72 || !passwordLetter.MatchString(password) ||
+			!passwordDigit.MatchString(password) || !passwordSpecial.MatchString(password) {
+			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("password must have at least 8 characters, at most 72 bytes, and include a letter, digit, and special character"))
+			return
+		}
+		if role == "admin" {
+			user, err := h.UserService.RegisterAdminUser(r.Context(), &payload)
+			if err != nil {
+				utils.WriteJsonError(w, err.StatusCode, err.Err)
+				return
+			}
+			h.startSession(w, http.StatusCreated, role, user.Id)
+			return
+		}
+		user, err := h.UserService.RegisterStudentUser(r.Context(), &payload)
+		if err != nil {
+			utils.WriteJsonError(w, err.StatusCode, err.Err)
+			return
+		}
+		h.startSession(w, http.StatusCreated, role, user.Id)
 	}
-
-	// validate the payload
-	if err := utils.GetValidator().Struct(payload); err != nil {
-		errors := err.(validator.ValidationErrors)
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
-		return
-	}
-
-	// call user service admin login
-	u, serviceErr := h.UserService.LoginAdminUser(r.Context(), &payload)
-	if serviceErr != nil {
-		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
-		return
-	}
-
-	// create a jwt tokens and insert in cookie
-	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
-		Id:   u.Id,
-		Type: "admin",
-	})
-	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
-	}
-
-	// add the access tokens to the response cookies
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
-
-	utils.WriteJson(w, http.StatusOK, nil)
 }
 
-func (h *Handler) handleRegister(w http.ResponseWriter, r *http.Request) {
-	// get the json payload
-	var payload types.RegisterUserPayload
-	if err := utils.ParseJson(r, &payload); err != nil {
-		utils.WriteJsonError(w, http.StatusBadRequest, err)
-		return
-	}
-
-	// validate the payload
-	if err := utils.GetValidator().Struct(payload); err != nil {
-		errors := err.(validator.ValidationErrors)
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
-		return
-	}
-
-	// call user service register
-	u, serviceErr := h.UserService.RegisterStudentUser(r.Context(), &payload)
-	if serviceErr != nil {
-		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
-		return
-	}
-
-	// create a jwt access token and insert in cookie
-	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
-		Id:   u.Id,
-		Type: "student",
-	})
-	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
-		return
-	}
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
-
-	utils.WriteJson(w, http.StatusCreated, nil)
+func validEmail(email string) bool {
+	address, err := mail.ParseAddress(email)
+	return err == nil && address.Address == email
 }
 
-func (h *Handler) handleAdminRegister(w http.ResponseWriter, r *http.Request) {
-	// Can be called only by admin user
-	// Check is done in the middleware token check
-	// TODO: Provide a way to register admin user using access-secret only avaiable to admins
-
-	// get the json payload
-	var payload types.RegisterUserPayload
-	if err := utils.ParseJson(r, &payload); err != nil {
+func readPayload(w http.ResponseWriter, r *http.Request, payload any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := utils.ParseJson(r, payload); err != nil {
 		utils.WriteJsonError(w, http.StatusBadRequest, err)
-		return
+		return false
 	}
+	return true
+}
 
-	// validate the payload
-	if err := utils.GetValidator().Struct(payload); err != nil {
-		errors := err.(validator.ValidationErrors)
-		utils.WriteJsonError(w, http.StatusBadRequest, fmt.Errorf("invalid payload %v", errors))
-		return
-	}
-
-	// call user service admin register
-	u, serviceErr := h.UserService.RegisterAdminUser(r.Context(), &payload)
-	if serviceErr != nil {
-		utils.WriteJsonError(w, serviceErr.StatusCode, serviceErr.Err)
-		return
-	}
-
-	// create a jwt access token and insert in cookie
-	accessToken, refreshToken, err := h.AuthService.CreateTokens(&types.TokenInput{
-		Id:   u.Id,
-		Type: "admin",
-	})
+func (h *Handler) startSession(w http.ResponseWriter, status int, role string, id int) {
+	access, refresh, err := h.AuthService.CreateTokens(&types.TokenInput{Id: id, Type: role})
 	if err != nil {
-		utils.WriteJsonError(w, http.StatusInternalServerError, err)
+		utils.WriteJsonError(w, http.StatusInternalServerError, errors.New("could not start session"))
 		return
 	}
-	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", accessToken, time.Second*time.Duration(config.Env.JWTExpirationTime))
-	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refreshToken, time.Hour*time.Duration(24*30))
-
-	utils.WriteJson(w, http.StatusCreated, nil)
+	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", access, time.Duration(config.Env.JWTExpirationTime)*time.Second)
+	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refresh, 30*24*time.Hour)
+	utils.WriteJson(w, status, nil)
 }

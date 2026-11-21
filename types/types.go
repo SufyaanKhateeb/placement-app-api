@@ -36,19 +36,17 @@ type AuthService interface {
 	CreateTokens(tokenInput *TokenInput) (string, string, error)
 }
 
-type AuthStore interface{}
-
 type LoginUserPayload struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
 	UserType string `json:"userType"`
 }
 
 type RegisterUserPayload struct {
-	FirstName string `json:"firstName" validate:"required"`
-	LastName  string `json:"lastName" validate:"required"`
-	Email     string `json:"email" validate:"required,email"`
-	Password  string `json:"password" validate:"required,min=8,max=130,password"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
 }
 
 type User struct {

@@ -6,8 +6,6 @@ import (
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 )
 
-type MockAuthStore struct{}
-
 type MockUserStore struct {
 	UserExists bool
 	IsAdmin    bool

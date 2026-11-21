@@ -9,15 +9,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type AuthService struct {
-	Store types.AuthStore
-}
-
-func NewAuthService(store types.AuthStore) *AuthService {
-	return &AuthService{
-		Store: store,
-	}
-}
+type AuthService struct{}
 
 const Issuer = "placement-app-server"
 const Audience = "placement-app-client"
@@ -56,18 +48,18 @@ func (a *AuthService) CreateTokens(tokenInput *types.TokenInput) (string, string
 		claims.Type = tokenInput.Type
 	}
 	if len(tokenInput.TokenData) != 0 {
-		claims.Type = tokenInput.TokenData
+		claims.TokenData = tokenInput.TokenData
 	}
 
 	accessToken, err := a.SignJwt(expirationTime, *claims)
 	if err != nil {
-		return "", "", nil
+		return "", "", err
 	}
 
 	expirationTime = time.Hour * time.Duration(24*30)
 	refreshToken, err := a.SignJwt(expirationTime, *claims)
 	if err != nil {
-		return "", "", nil
+		return "", "", err
 	}
 
 	return accessToken, refreshToken, nil
