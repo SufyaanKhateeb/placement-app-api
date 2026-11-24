@@ -125,6 +125,33 @@ jobs:
           curl --fail-with-body --silent --show-error --max-time 30 --request POST \
             --header "Authorization: Bearer $VERCEL_TOKEN" \
             "https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/promote/$DEPLOYMENT_ID?teamId=$VERCEL_ORG_ID"
+      - name: Wait for the production domain to switch
+        id: routing
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.id }}
+          PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_ORIGIN }}
+        run: |
+          host=${PRODUCTION_ORIGIN#https://}
+          host=${host%/}
+          if [[ ! "$host" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+            echo "PRODUCTION_ORIGIN must be an HTTPS hostname." >&2
+            exit 1
+          fi
+          for attempt in {1..12}; do
+            active_deployment=$(curl --fail-with-body --silent --show-error --max-time 10 \
+              --header "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v4/aliases/$host?teamId=$VERCEL_ORG_ID" |
+              jq -r '.deploymentId // empty')
+            if [[ "$active_deployment" == "$DEPLOYMENT_ID" ]]; then
+              echo "Production domain points to $DEPLOYMENT_ID."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production domain did not switch to $DEPLOYMENT_ID within 60 seconds." >&2
+          exit 1
       - name: Verify the public site and signed-out API
         id: smoke
         shell: bash
@@ -138,12 +165,19 @@ jobs:
             method=GET
             if [[ "$route" == refresh ]]; then method=POST; fi
             body=$(mktemp)
-            status=$(curl --silent --show-error --max-time 20 --request "$method" \
-              --output "$body" --write-out '%{http_code}' "${PRODUCTION_ORIGIN%/}/api/v1/$route")
-            if [[ "$status" != 401 ]] || ! jq -e '.error | type == "string"' "$body" > /dev/null; then
-              echo "Expected a JSON 401 from $method /api/v1/$route, got HTTP $status." >&2
-              exit 1
-            fi
+            for attempt in {1..6}; do
+              status=$(curl --silent --show-error --max-time 20 --request "$method" \
+                --output "$body" --write-out '%{http_code}' "${PRODUCTION_ORIGIN%/}/api/v1/$route")
+              if [[ "$status" == 401 ]] && jq -e '.error | type == "string"' "$body" > /dev/null; then
+                break
+              fi
+              if [[ "$attempt" == 6 ]]; then
+                echo "Expected a JSON 401 from $method /api/v1/$route, got HTTP $status." >&2
+                exit 1
+              fi
+              sleep 5
+            done
+            rm -f "$body"
           done
       - name: Summarize the release
         if: always()
@@ -153,6 +187,7 @@ jobs:
           READY_RESULT: ${{ steps.deployment.outcome }}
           MIGRATION_RESULT: ${{ steps.migrations.outcome }}
           PROMOTION_RESULT: ${{ steps.promotion.outcome }}
+          ROUTING_RESULT: ${{ steps.routing.outcome }}
           VERIFY_RESULT: ${{ steps.smoke.outcome }}
         run: |
           {
@@ -165,5 +200,6 @@ jobs:
             printf '| Confirm deployment is ready | %s |\n' "${READY_RESULT:-skipped}"
             printf '| Apply migrations | %s |\n' "${MIGRATION_RESULT:-skipped}"
             printf '| Promote to production | %s |\n' "${PROMOTION_RESULT:-skipped}"
+            printf '| Switch production domain | %s |\n' "${ROUTING_RESULT:-skipped}"
             printf '| Verify the public site | %s |\n' "${VERIFY_RESULT:-skipped}"
           } >> "$GITHUB_STEP_SUMMARY"
