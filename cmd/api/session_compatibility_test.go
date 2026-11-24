@@ -66,7 +66,7 @@ func TestLegacyRegularUserSessions(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "ACCESS_TOKEN", Value: legacy})
 	res := httptest.NewRecorder()
 	adminOnly.ServeHTTP(res, req)
-	if res.Code != http.StatusFound {
+	if res.Code != http.StatusForbidden {
 		t.Fatalf("expected the admin access check to deny the session, got HTTP %d", res.Code)
 	}
 }

@@ -43,8 +43,8 @@ func TestRegularSessionCannotUseAdminRoutes(t *testing.T) {
 		name, method, path, cookieName, token string
 		status                                int
 	}{
-		{"register admin with access token", http.MethodPost, "/register-admin", "ACCESS_TOKEN", access, http.StatusFound},
-		{"register admin with refresh token", http.MethodPost, "/register-admin", "REFRESH_TOKEN", refresh, http.StatusFound},
+		{"register admin with access token", http.MethodPost, "/register-admin", "ACCESS_TOKEN", access, http.StatusForbidden},
+		{"register admin with refresh token", http.MethodPost, "/register-admin", "REFRESH_TOKEN", refresh, http.StatusForbidden},
 		{"read Google admin link", http.MethodGet, "/auth/google/admin/link", "ACCESS_TOKEN", access, http.StatusUnauthorized},
 		{"start Google admin link", http.MethodPost, "/auth/google/admin/link", "ACCESS_TOKEN", access, http.StatusUnauthorized},
 	} {
@@ -57,9 +57,6 @@ func TestRegularSessionCannotUseAdminRoutes(t *testing.T) {
 			handler.ServeHTTP(res, req)
 			if res.Code != tc.status {
 				t.Fatalf("expected HTTP %d, got %d", tc.status, res.Code)
-			}
-			if tc.status == http.StatusFound && res.Header().Get("Location") != "/login" {
-				t.Fatalf("unexpected denial redirect: %q", res.Header().Get("Location"))
 			}
 			if len(res.Header().Values("Set-Cookie")) != 0 {
 				t.Fatal("denied request issued cookies")

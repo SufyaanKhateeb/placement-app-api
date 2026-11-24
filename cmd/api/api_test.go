@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -10,12 +11,18 @@ func TestHTTPRouting(t *testing.T) {
 	const origin = "http://localhost:5173"
 	handler := newHandler(nil, origin, nil)
 
-	t.Run("protected route requires a session", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/user", nil)
-		res := httptest.NewRecorder()
-		handler.ServeHTTP(res, req)
-		if res.Code != http.StatusFound || res.Header().Get("Location") != "/login" {
-			t.Fatalf("expected login redirect, got %d to %q", res.Code, res.Header().Get("Location"))
+	t.Run("session APIs return JSON when signed out", func(t *testing.T) {
+		for _, route := range []struct{ method, path string }{
+			{http.MethodGet, "/api/v1/user"},
+			{http.MethodPost, "/api/v1/refresh"},
+		} {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+			if res.Code != http.StatusUnauthorized || res.Header().Get("Location") != "" ||
+				!strings.HasPrefix(res.Header().Get("Content-Type"), "application/json") {
+				t.Fatalf("%s %s: expected a JSON 401 without a redirect, got %d %v", route.method, route.path, res.Code, res.Header())
+			}
 		}
 	})
 
