@@ -84,24 +84,26 @@ jobs:
           git -C web archive HEAD | tar -x -C "$release_dir/web"
           test -f "$release_dir/web/package-lock.json"
           cd "$release_dir"
-          deployment_output=$(vercel deploy --prod --skip-domain --yes --logs \
-            --build-env VITE_BACKEND_URL=/api/v1 --token="$VERCEL_TOKEN")
-          deployment_url=$(printf '%s' "$deployment_output" | jq -Rrs '
-            sub("^\s+"; "") | sub("\s+$"; "")
-            | if startswith("{") then fromjson | .deployment.url else . end')
-          if [[ ! "$deployment_url" =~ ^https://([a-zA-Z0-9-]+\.vercel\.app)/?$ ]]; then
-            echo "Vercel did not return a usable deployment URL." >&2
-            exit 1
-          fi
-          printf 'host=%s\n' "${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          printf 'Vercel staged deployment: %s\n' "$deployment_url"
+          vercel deploy --prod --skip-domain --yes --logs \
+            --build-env VITE_BACKEND_URL=/api/v1 --token="$VERCEL_TOKEN" \
+            > "$RUNNER_TEMP/vercel-deployment-output"
       - name: Confirm the staged deployment is ready
         id: deployment
         shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          DEPLOYMENT_HOST: ${{ steps.build.outputs.host }}
         run: |
+          deployment_url=$(jq -Rrs '
+            sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")
+            | if startswith("{") then fromjson | .deployment.url else . end
+          ' "$RUNNER_TEMP/vercel-deployment-output")
+          if [[ ! "$deployment_url" =~ ^https://([a-zA-Z0-9-]+\.vercel\.app)/?$ ]]; then
+            echo "Vercel did not return a usable deployment URL." >&2
+            exit 1
+          fi
+          DEPLOYMENT_HOST=${BASH_REMATCH[1]}
+          printf 'host=%s\n' "$DEPLOYMENT_HOST" >> "$GITHUB_OUTPUT"
+          printf 'Vercel staged deployment: %s\n' "$deployment_url"
           deployment_id=$(curl --fail-with-body --silent --show-error --max-time 30 \
             --header "Authorization: Bearer $VERCEL_TOKEN" \
             "https://api.vercel.com/v13/deployments/$DEPLOYMENT_HOST?teamId=$VERCEL_ORG_ID" |
@@ -147,7 +149,7 @@ jobs:
         if: always()
         env:
           BUILD_RESULT: ${{ steps.build.outcome }}
-          STAGED_HOST: ${{ steps.build.outputs.host }}
+          STAGED_HOST: ${{ steps.deployment.outputs.host }}
           READY_RESULT: ${{ steps.deployment.outcome }}
           MIGRATION_RESULT: ${{ steps.migrations.outcome }}
           PROMOTION_RESULT: ${{ steps.promotion.outcome }}
