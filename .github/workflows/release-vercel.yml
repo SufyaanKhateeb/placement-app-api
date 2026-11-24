@@ -74,6 +74,7 @@ jobs:
       - run: npm install --global vercel@66.6.0
       - name: Build both repositories on Vercel
         id: deployment
+        shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
@@ -83,9 +84,9 @@ jobs:
           git -C web archive HEAD | tar -x -C "$release_dir/web"
           test -f "$release_dir/web/package-lock.json"
           cd "$release_dir"
-          deployment_url=$(vercel deploy --prod --skip-domain --yes --logs \
-            --build-env VITE_BACKEND_URL=/api/v1 --token="$VERCEL_TOKEN")
-          [[ "$deployment_url" == https://* ]]
+          deployment_url=$(vercel deploy --prod --skip-domain --yes --json \
+            --build-env VITE_BACKEND_URL=/api/v1 --token="$VERCEL_TOKEN" |
+            jq -er '.deployment.url | select(type == "string" and startswith("https://"))')
           printf 'url=%s\n' "$deployment_url" >> "$GITHUB_OUTPUT"
       - name: Apply database migrations
         env:
