@@ -13,10 +13,11 @@ var errNotFound = errors.New("form not found")
 var errEmptyForm = errors.New("add at least one field before publishing")
 
 type Summary struct {
-	ID               int64  `json:"id"`
-	Title            string `json:"title"`
-	HasDraft         bool   `json:"hasDraft"`
-	PublishedVersion int    `json:"publishedVersion"`
+	ID               int64   `json:"id"`
+	Title            string  `json:"title"`
+	HasDraft         bool    `json:"hasDraft"`
+	PublishedVersion int     `json:"publishedVersion"`
+	SubmissionStatus *string `json:"submissionStatus,omitempty"`
 }
 
 type Form struct {
@@ -37,16 +38,18 @@ type store struct {
 	db *pgxpool.Pool
 }
 
-func (s store) list(ctx context.Context, admin bool) ([]Summary, error) {
+func (s store) list(ctx context.Context, admin bool, userID *int) ([]Summary, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT f.id,
 		       COALESCE(CASE WHEN $1 THEN f.draft->>'title' END, v.definition->>'title'),
-		       $1 AND f.draft IS NOT NULL, COALESCE(f.published_version, 0)
+		       $1 AND f.draft IS NOT NULL, COALESCE(f.published_version, 0),
+		       CASE WHEN $2::integer IS NOT NULL THEN COALESCE(s.status, 'not_submitted') END
 		FROM forms f
 		LEFT JOIN form_versions v ON v.form_id = f.id AND v.version = f.published_version
+		LEFT JOIN form_submissions s ON s.form_id = f.id AND s.user_id = $2
 		WHERE $1 OR f.published_version IS NOT NULL
 		ORDER BY f.id DESC
-	`, admin)
+	`, admin, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +57,7 @@ func (s store) list(ctx context.Context, admin bool) ([]Summary, error) {
 	forms := []Summary{}
 	for rows.Next() {
 		var form Summary
-		if err := rows.Scan(&form.ID, &form.Title, &form.HasDraft, &form.PublishedVersion); err != nil {
+		if err := rows.Scan(&form.ID, &form.Title, &form.HasDraft, &form.PublishedVersion, &form.SubmissionStatus); err != nil {
 			return nil, err
 		}
 		forms = append(forms, form)

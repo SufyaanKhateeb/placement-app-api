@@ -57,7 +57,11 @@ func (h handler) fromFrontend(next http.HandlerFunc) http.HandlerFunc {
 
 func (h handler) list(admin bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		forms, err := h.store.list(r.Context(), admin)
+		var userID *int
+		if session, ok := middlewares.Session(r.Context()); !admin && ok && session.Type == types.RoleUser {
+			userID = &session.Id
+		}
+		forms, err := h.store.list(r.Context(), admin, userID)
 		writeResult(w, http.StatusOK, forms, err)
 	}
 }

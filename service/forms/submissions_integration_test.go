@@ -113,6 +113,11 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 		}
 	}
 
+	const formsPath = "/api/v1/forms"
+	check(requestAt(formsPath, http.MethodGet, "owner", ""), http.StatusOK, `"submissionStatus":"not_submitted"`)
+	if body := requestAt(formsPath, http.MethodGet, "admin", "").Body.String(); strings.Contains(body, "submissionStatus") {
+		t.Fatalf("admin browsing received a personal status: %s", body)
+	}
 	valid := `{"version":1,"values":{"code":"ABC","unknown":"discard"}}`
 	check(request(http.MethodPost, "", valid), http.StatusFound, "")
 	check(request(http.MethodPost, "admin", valid), http.StatusFound, "")
@@ -134,6 +139,8 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	}
 	check(success, http.StatusCreated, `"status":"submitted"`)
 	check(duplicate, http.StatusConflict, "already_submitted")
+	check(requestAt(formsPath, http.MethodGet, "owner", ""), http.StatusOK, `"submissionStatus":"submitted"`)
+	check(requestAt(formsPath, http.MethodGet, "other", ""), http.StatusOK, `"submissionStatus":"not_submitted"`)
 	var original submission
 	if err := json.Unmarshal(success.Body.Bytes(), &original); err != nil {
 		t.Fatal(err)
@@ -158,6 +165,7 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":1,"decision":"approved"}`), http.StatusConflict, "reload")
 	check(request(http.MethodGet, "owner", ""), http.StatusOK, `"fieldId":"code"`)
 	check(request(http.MethodGet, "owner", ""), http.StatusOK, "Use a different code")
+	check(requestAt(formsPath, http.MethodGet, "owner", ""), http.StatusOK, `"submissionStatus":"changes_requested"`)
 	draft, err := s.editPublished(ctx, form.ID, form.Revision)
 	if err != nil {
 		t.Fatal(err)
@@ -185,5 +193,6 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	check(request(http.MethodPut, "owner", `{"version":1,"revision":2,"values":{"code":"XYZ"}}`), http.StatusConflict, "submission_changed")
 	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":3,"decision":"approved"}`), http.StatusOK, `"status":"approved"`)
 	check(request(http.MethodGet, "owner", ""), http.StatusOK, `"status":"approved"`)
+	check(requestAt(formsPath, http.MethodGet, "owner", ""), http.StatusOK, `"submissionStatus":"approved"`)
 	check(request(http.MethodPut, "owner", `{"version":1,"revision":4,"values":{"code":"XYZ"}}`), http.StatusConflict, "submission_changed")
 }
