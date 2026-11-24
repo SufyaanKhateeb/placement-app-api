@@ -74,6 +74,7 @@ jobs:
       - run: npm install --global vercel@66.6.0
       - name: Build both repositories on Vercel
         id: deployment
+        shell: bash
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
@@ -83,10 +84,10 @@ jobs:
           git -C web archive HEAD | tar -x -C "$release_dir/web"
           test -f "$release_dir/web/package-lock.json"
           cd "$release_dir"
-          deployment_url=$(vercel deploy --prod --skip-domain --yes --logs \
-            --build-env VITE_BACKEND_URL=/api/v1 --token="$VERCEL_TOKEN")
-          [[ "$deployment_url" == https://* ]]
-          printf 'url=%s\n' "$deployment_url" >> "$GITHUB_OUTPUT"
+          deployment_id=$(vercel deploy --prod --skip-domain --yes --json \
+            --build-env VITE_BACKEND_URL=/api/v1 --token="$VERCEL_TOKEN" |
+            jq -er '.deployment.id | select(type == "string" and test("^dpl_[A-Za-z0-9]+$"))')
+          printf 'id=%s\n' "$deployment_id" >> "$GITHUB_OUTPUT"
       - name: Apply database migrations
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
@@ -94,8 +95,11 @@ jobs:
       - name: Promote the deployment
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          DEPLOYMENT_URL: ${{ steps.deployment.outputs.url }}
-        run: vercel promote "$DEPLOYMENT_URL" --yes --token="$VERCEL_TOKEN"
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.id }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 30 --request POST \
+            --header "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/promote/$DEPLOYMENT_ID?teamId=$VERCEL_ORG_ID"
       - name: Verify frontend and Go API
         env:
           PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_ORIGIN }}
