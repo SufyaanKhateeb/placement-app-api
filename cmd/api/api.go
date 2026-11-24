@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/forms"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/user"
@@ -20,7 +21,9 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 	forms.RegisterRoutes(mux, db, &auth.AuthService{}, frontendOrigin)
 	userService := user.NewUserService(user.NewStore(db))
 	authService := &auth.AuthService{}
-	user.NewHandler(userService, authService).RegisterRoutes(mux, "/api/v1")
+	accessStore := access.Store{DB: db}
+	user.NewHandler(userService, authService).RegisterRoutes(mux, "/api/v1", accessStore.Resolve, frontendOrigin)
+	accessStore.RegisterRoutes(mux, authService, frontendOrigin)
 
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   []string{frontendOrigin},

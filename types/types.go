@@ -89,11 +89,12 @@ type CustomClaims struct {
 }
 
 type UserDto struct {
-	Id        int    `json:"id"`
-	Role      string `json:"role"`
-	UType     string `json:"uType"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-	Email     string `json:"email"`
-	Verified  bool   `json:"verified"`
+	Permissions []string `json:"permissions"`
+	Id          int      `json:"id"`
+	Role        string   `json:"role"`
+	UType       string   `json:"uType"`
+	FirstName   string   `json:"firstName"`
+	LastName    string   `json:"lastName"`
+	Email       string   `json:"email"`
+	Verified    bool     `json:"verified"`
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 )
@@ -22,14 +23,20 @@ func NewHandler(users types.UserService, auth types.AuthService) *Handler {
 	return &Handler{UserService: users, AuthService: auth}
 }
 
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string, resolve middlewares.ResolvePermissions, frontendOrigin string) {
 	mux.HandleFunc("POST "+prefix+"/login", h.login(types.RoleUser))
 	mux.HandleFunc("POST "+prefix+"/login-admin", h.login(types.RoleAdmin))
 	mux.HandleFunc("POST "+prefix+"/register", h.register(types.RoleUser))
 
-	authenticate := middlewares.Authenticate(h.AuthService, "")
-	adminOnly := middlewares.Authenticate(h.AuthService, types.RoleAdmin)
-	mux.Handle("POST "+prefix+"/register-admin", adminOnly(h.register(types.RoleAdmin)))
+	authenticate := middlewares.Authenticate(h.AuthService, resolve, "")
+	canInvite := middlewares.Authenticate(h.AuthService, resolve, types.RoleAdmin, access.InviteAdmins)
+	mux.Handle("POST "+prefix+"/register-admin", canInvite(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && origin != frontendOrigin {
+			utils.WriteJsonError(w, http.StatusForbidden, errors.New("untrusted request origin"))
+			return
+		}
+		h.register(types.RoleAdmin)(w, r)
+	}))
 	mux.Handle("POST "+prefix+"/refresh", authenticate(h.profile))
 	mux.Handle("POST "+prefix+"/logout", authenticate(h.logout))
 	mux.Handle("GET "+prefix+"/user", authenticate(h.profile))
@@ -42,7 +49,7 @@ func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile := types.UserDto{Role: session.Type, UType: session.Type}
+	profile := types.UserDto{Role: session.Type, UType: session.Type, Permissions: middlewares.Permissions(r.Context())}
 	if session.Type == types.RoleUser {
 		profile.UType = types.LegacyRoleStudent
 	}

@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,9 +24,11 @@ type handler struct {
 
 func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthService, origin string) {
 	h := handler{store: store{db: db}, origin: origin}
-	user := middlewares.Authenticate(sessions, "")
-	admin := middlewares.Authenticate(sessions, types.RoleAdmin)
-	submitter := middlewares.Authenticate(sessions, types.RoleUser)
+	accessStore := access.Store{DB: db}
+	user := middlewares.Authenticate(sessions, accessStore.Resolve, "", access.BrowseForms)
+	admin := middlewares.Authenticate(sessions, accessStore.Resolve, "", access.ManageForms)
+	reviewer := middlewares.Authenticate(sessions, accessStore.Resolve, "", access.ReviewSubmissions)
+	submitter := middlewares.Authenticate(sessions, accessStore.Resolve, types.RoleUser, access.OwnSubmissions)
 
 	mux.Handle("GET /api/v1/forms/{id}/submission", submitter(h.getMySubmission))
 	mux.Handle("POST /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(false))))
@@ -40,9 +43,13 @@ func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthSer
 	mux.Handle("POST /api/v1/admin/forms/{id}/draft", admin(h.fromFrontend(h.revisionAction(h.store.editPublished))))
 	mux.Handle("POST /api/v1/admin/forms/{id}/publish", admin(h.fromFrontend(h.revisionAction(h.store.publish))))
 	mux.Handle("POST /api/v1/admin/forms/preview", admin(h.fromFrontend(h.preview)))
-	mux.Handle("GET /api/v1/admin/submissions", admin(h.listReviews))
-	mux.Handle("GET /api/v1/admin/submissions/{id}", admin(h.getReview))
-	mux.Handle("PUT /api/v1/admin/submissions/{id}/review", admin(h.fromFrontend(h.reviewSubmission)))
+	mux.Handle("GET /api/v1/admin/forms/approval-roles", admin(func(w http.ResponseWriter, r *http.Request) {
+		roles, err := accessStore.ApprovalRoles(r.Context())
+		writeResult(w, http.StatusOK, roles, err)
+	}))
+	mux.Handle("GET /api/v1/admin/submissions", reviewer(h.listReviews))
+	mux.Handle("GET /api/v1/admin/submissions/{id}", reviewer(h.getReview))
+	mux.Handle("PUT /api/v1/admin/submissions/{id}/review", reviewer(h.fromFrontend(h.reviewSubmission)))
 }
 
 func (h handler) fromFrontend(next http.HandlerFunc) http.HandlerFunc {
@@ -57,11 +64,8 @@ func (h handler) fromFrontend(next http.HandlerFunc) http.HandlerFunc {
 
 func (h handler) list(admin bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var userID *int
-		if session, ok := middlewares.Session(r.Context()); !admin && ok && session.Type == types.RoleUser {
-			userID = &session.Id
-		}
-		forms, err := h.store.list(r.Context(), admin, userID)
+		ctx := r.Context()
+		forms, err := h.store.list(ctx, admin, publishedAccessAccount(ctx), middlewares.HasPermission(ctx, access.BrowseRestricted))
 		writeResult(w, http.StatusOK, forms, err)
 	}
 }
@@ -80,13 +84,17 @@ func (h handler) getPublished(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	session, _ := middlewares.Session(r.Context())
-	var userID *int
-	if session.Type == types.RoleUser {
-		userID = &session.Id
-	}
-	form, err := readPublished(r.Context(), h.store.db, id, userID)
+	ctx := r.Context()
+	form, err := readPublished(ctx, h.store.db, id, publishedAccessAccount(ctx), middlewares.HasPermission(ctx, access.BrowseRestricted))
 	writeResult(w, http.StatusOK, form, err)
+}
+
+func publishedAccessAccount(ctx context.Context) *int {
+	session, _ := middlewares.Session(ctx)
+	if session.Type == types.RoleUser {
+		return &session.Id
+	}
+	return nil
 }
 
 func (h handler) create(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +203,7 @@ func writeResult(w http.ResponseWriter, status int, result any, err error) {
 		utils.WriteJsonError(w, http.StatusConflict, err)
 	case errors.Is(err, errNotFound):
 		utils.WriteJsonError(w, http.StatusNotFound, err)
-	case errors.Is(err, errEmptyForm), errors.Is(err, errInvalidFollowUp):
+	case errors.Is(err, errEmptyForm), errors.Is(err, errInvalidFollowUp), errors.Is(err, errInvalidApprovalRole):
 		utils.WriteJsonError(w, http.StatusBadRequest, err)
 	default:
 		var databaseError interface{ SQLState() string }

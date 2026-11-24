@@ -82,6 +82,9 @@ func (s *Store) LinkGoogleAdmin(ctx context.Context, adminID int, identity auth.
 
 func (s *Store) GoogleAdminLinked(ctx context.Context, adminID int, issuer string) (bool, error) {
 	var linked bool
-	err := s.db.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM oidc_identity WHERE admin_id = $1 AND issuer = $2)", adminID, issuer).Scan(&linked)
+	err := s.db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM oidc_identity WHERE admin_id = a.id AND issuer = $2)
+		FROM admin_user a WHERE a.id = $1
+	`, adminID, issuer).Scan(&linked)
 	return linked, err
 }

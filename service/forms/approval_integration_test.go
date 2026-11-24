@@ -29,6 +29,7 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 	defer pool.Close()
 	var users []int
 	var forms []int64
+	var roleID int64
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -47,6 +48,9 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 			if _, err := pool.Exec(cleanup, "DELETE FROM app_user WHERE id = $1", id); err != nil {
 				t.Errorf("cleanup users: %v", err)
 			}
+		}
+		if _, err := pool.Exec(cleanup, "DELETE FROM access_roles WHERE id = $1", roleID); err != nil {
+			t.Errorf("cleanup approval role: %v", err)
 		}
 	}()
 	for i := 0; i < 2; i++ {
@@ -83,7 +87,9 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 	source := create(def)
 
 	mux := http.NewServeMux()
-	RegisterRoutes(mux, pool, submissionTestAuth{owner: users[0], other: users[1]}, "http://localhost:5173")
+	admin := testReviewer(t, ctx, pool)
+	defer deleteTestReviewer(t, pool, admin)
+	RegisterRoutes(mux, pool, submissionTestAuth{owner: users[0], other: users[1], admin: admin}, "http://localhost:5173")
 	request := func(method, path, cookie, body string, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
@@ -110,7 +116,15 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def.ApprovalAction = &ApprovalAction{Kind: "assign_role", Role: "verified-member"}
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO access_roles (key, name, approval_eligible) VALUES ('verified-member', 'Verified member', TRUE) RETURNING id
+	`).Scan(&roleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO access_role_permissions VALUES ($1, 'forms.browse')", roleID); err != nil {
+		t.Fatal(err)
+	}
+	def.ApprovalAction = &ApprovalAction{Kind: "assign_role", RoleID: roleID}
 	revision, err := s.save(ctx, source.ID, draft.Revision, def)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +133,12 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	afterEdit := request(http.MethodPost, sourcePath, "other", `{"version":2,"values":{"name":"Test"}}`, http.StatusCreated)
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM access_assignments WHERE account_type = 'user' AND account_id = $1
+	`, users[1]); err != nil {
+		t.Fatal(err)
+	}
+	request(http.MethodGet, "/api/v1/forms", "other", "", http.StatusForbidden)
 
 	approve := func(response *httptest.ResponseRecorder) int64 {
 		t.Helper()
@@ -144,9 +164,12 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 		t.Fatalf("missing pinned follow-up grant: %d (%v)", followUpID, err)
 	}
 	var role string
-	if err := pool.QueryRow(ctx, "SELECT role_key FROM form_verifications WHERE submission_id=$1", afterID).Scan(&role); err != nil || role != "verified-member" {
+	var grant int64
+	if err := pool.QueryRow(ctx, "SELECT role_key, access_role_id FROM form_verifications WHERE submission_id=$1", afterID).Scan(&role, &grant); err != nil || role != "verified-member" || grant != roleID {
 		t.Fatalf("missing assigned role: %q (%v)", role, err)
 	}
+	request(http.MethodGet, "/api/v1/forms", "other", "", http.StatusOK)
+	request(http.MethodGet, sourcePath, "other", "", http.StatusForbidden)
 	request(http.MethodGet, "/api/v1/admin/forms", "other", "", http.StatusForbidden)
 }
 

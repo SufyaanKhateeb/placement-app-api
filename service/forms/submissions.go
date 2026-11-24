@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/jackc/pgx/v5"
 )
@@ -26,6 +27,7 @@ type submission struct {
 	Values      map[string]json.RawMessage `json:"values"`
 	Changes     map[string]string          `json:"changes,omitempty"`
 	Comment     []reviewPart               `json:"comment,omitempty"`
+	GrantedRole *access.RoleChoice         `json:"grantedRole,omitempty"`
 }
 
 type submissionInput struct {
@@ -114,6 +116,15 @@ func (s store) getSubmission(ctx context.Context, id int64, user int) (*submissi
 	if err != nil {
 		return nil, err
 	}
+	if action := result.Definition.ApprovalAction; result.Status == "approved" && action != nil && action.Kind == "assign_role" {
+		role, err := (access.Store{DB: s.db}).SubmissionRole(ctx, result.ID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			result.GrantedRole = &role
+		}
+	}
 	return &result, nil
 }
 
@@ -130,7 +141,7 @@ func (s store) submit(ctx context.Context, id int64, user int, input submissionI
 	if err != nil {
 		return submission{}, replaceNoRows(err, errNotFound)
 	}
-	published, err := readPublished(ctx, tx, id, &user)
+	published, err := readPublished(ctx, tx, id, &user, false)
 	if err != nil {
 		return submission{}, err
 	}

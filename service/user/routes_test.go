@@ -46,7 +46,7 @@ func TestUserServiceHandlers(t *testing.T) {
 		rr := httptest.NewRecorder()
 		router := http.NewServeMux()
 
-		handler.RegisterRoutes(router, "")
+		handler.RegisterRoutes(router, "", nil, "")
 		router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusBadRequest {
@@ -71,7 +71,7 @@ func TestUserServiceHandlers(t *testing.T) {
 		rr := httptest.NewRecorder()
 		router := http.NewServeMux()
 
-		handler.RegisterRoutes(router, "")
+		handler.RegisterRoutes(router, "", nil, "")
 		router.ServeHTTP(rr, req)
 
 		if rr.Code != http.StatusCreated {

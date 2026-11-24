@@ -39,19 +39,19 @@ type store struct {
 	db *pgxpool.Pool
 }
 
-func (s store) list(ctx context.Context, admin bool, userID *int) ([]Summary, error) {
+func (s store) list(ctx context.Context, admin bool, userID *int, browseRestricted bool) ([]Summary, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT f.id,
 		       COALESCE(CASE WHEN $1 THEN f.draft->>'title' END, v.definition->>'title'),
 		       $1 AND f.draft IS NOT NULL, COALESCE(f.published_version, 0),
-		       CASE WHEN $2::integer IS NOT NULL THEN COALESCE(s.status, 'not_submitted') END,
+		       CASE WHEN NOT $1 AND $2::integer IS NOT NULL THEN COALESCE(s.status, 'not_submitted') END,
 		       CASE WHEN $1 THEN COALESCE(v.definition->'requiresApprovalGrant' = 'true'::jsonb, false) END
 		FROM forms f
 		LEFT JOIN form_versions v ON v.form_id = f.id AND v.version = f.published_version
 		LEFT JOIN form_submissions s ON s.form_id = f.id AND s.user_id = $2
 		WHERE $1 OR (f.published_version IS NOT NULL AND `+publishedFormAccess+`)
 		ORDER BY f.id DESC
-	`, admin, userID)
+	`, admin, userID, browseRestricted)
 	if err != nil {
 		return nil, err
 	}
@@ -87,19 +87,19 @@ func (s store) get(ctx context.Context, id int64) (Form, error) {
 	return form, replaceNoRows(err, errNotFound)
 }
 
-func readPublished(ctx context.Context, db formRowReader, id int64, userID *int) (PublishedForm, error) {
+func readPublished(ctx context.Context, db formRowReader, id int64, userID *int, browseRestricted bool) (PublishedForm, error) {
 	var form PublishedForm
 	err := db.QueryRow(ctx, `
 		SELECT f.id, v.version, v.definition
 		FROM forms f
 		JOIN form_versions v ON v.form_id = f.id AND v.version = f.published_version
 		WHERE f.id = $1 AND `+publishedFormAccess+`
-	`, id, userID).Scan(&form.ID, &form.Version, &form.Definition)
+	`, id, userID, browseRestricted).Scan(&form.ID, &form.Version, &form.Definition)
 	return form, replaceNoRows(err, errNotFound)
 }
 
 func (s store) save(ctx context.Context, id, revision int64, draft Definition) (int64, error) {
-	if err := checkFollowUp(ctx, s.db, id, draft.ApprovalAction); err != nil {
+	if err := checkApprovalAction(ctx, s.db, id, draft.ApprovalAction); err != nil {
 		return 0, err
 	}
 	var next int64
@@ -145,7 +145,7 @@ func (s store) publish(ctx context.Context, id, revision int64) (Form, error) {
 	if err != nil {
 		return Form{}, replaceNoRows(err, errConflict)
 	}
-	if err := checkFollowUp(ctx, tx, id, form.Published.ApprovalAction); err != nil {
+	if err := checkApprovalAction(ctx, tx, id, form.Published.ApprovalAction); err != nil {
 		return Form{}, err
 	}
 	if len(form.Published.Fields) == 0 {
