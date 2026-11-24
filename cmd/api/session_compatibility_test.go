@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"net/http"
@@ -30,7 +31,8 @@ func TestLegacyRegularUserSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	handler := middlewares.Authenticate(sessions, "")(func(w http.ResponseWriter, r *http.Request) {
+	resolve := func(context.Context, types.TokenInput) ([]string, error) { return []string{}, nil }
+	handler := middlewares.Authenticate(sessions, resolve, "")(func(w http.ResponseWriter, r *http.Request) {
 		session, ok := middlewares.Session(r.Context())
 		if !ok || session.Type != types.RoleUser || session.Id != 7 {
 			t.Errorf("expected the original user ID and canonical user role, got %+v", session)
@@ -59,7 +61,7 @@ func TestLegacyRegularUserSessions(t *testing.T) {
 		})
 	}
 
-	adminOnly := middlewares.Authenticate(sessions, types.RoleAdmin)(func(http.ResponseWriter, *http.Request) {
+	adminOnly := middlewares.Authenticate(sessions, resolve, types.RoleAdmin)(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("legacy user session reached an admin endpoint")
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/register-admin", nil)

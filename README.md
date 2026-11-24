@@ -44,12 +44,20 @@ The `/api/v1/user` and `/api/v1/refresh` responses include a canonical `role` of
 4. If rollback is necessary and the current migration is still `20261121200000`, stop the API and run `go run ./cmd/migrate down-one`, then restart the previous API. The previous API may prompt users with newly issued `user` tokens to sign in again.
 ## Form builder
 
-Apply migration `20261121210000` before running the form builder API. Signed-in admins manage shared drafts at `/admin/forms`. Signed-in users can browse published forms at `/forms`.
+Apply migration `20261121210000` before running the form builder API. Accounts with form management access manage shared drafts at `/admin/forms`. Accounts with browsing access can view published forms at `/forms`.
 
 Saves and publish requests include the revision the admin reviewed. A stale revision returns HTTP 409. Publishing preserves the previous snapshot and commits the new active version with the revision change. The admin preview checks sample values without saving a submission. Decimal values are passed as strings to preserve precision.
 
 The active published version is available to signed-in users. Per-form eligibility, attribute mapping, and submission are separate features.
 Field validation rules are part of the draft and each published snapshot. Text fields can set character limits and a Go regex pattern. Whole numbers, precise decimals, dates, and timestamps can set inclusive bounds. Timestamp bounds are stored with an offset, and the editor displays them in the administrator's local time zone. Existing forms without rules continue to use required and type validation.
+## Role-based access
+
+Apply migration `20261125100000` before enabling the paired API and UI. The migration assigns Member to each existing account and adds Form Manager and Reviewer for existing admins. The earliest admin by creation time and then ID receives Role Manager. If there are no admins, the first admin provisioned through the existing database setup receives it. Existing sign-in cookies retain the same account identity. The API resolves permissions from PostgreSQL.
+
+Use **Roles and access** to manage assignments and review changes. Before rollout, inventory old approval keys on the rehearsal database. A Role Manager can map each key to an eligible custom role. Existing verification records and follow-up unlocks are preserved. Older submissions with an unmapped role key can still be approved and receive verification.
+
+For a release rollback, retain the added tables and access history. The previous API gives every admin staff access and allows admin registration. If that would restore revoked access or bypass the new registration gate, block the affected routes until a corrected release is ready. Use `down-one` on a disposable rehearsal database to verify reversibility.
+
 ## Vercel deployment
 
 The React UI and Go API are released to one Vercel project at one HTTPS origin. The repositories remain separate. The release workflow checks out a specific UI commit into `web/`, then sends both source trees to Vercel to build the UI and the Go Function in `api/index.go`. The original `go run ./cmd` server is still the local entry point. PostgreSQL remains on Neon.

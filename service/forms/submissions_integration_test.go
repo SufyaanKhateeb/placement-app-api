@@ -21,6 +21,7 @@ type submissionTestAuth struct {
 	types.AuthService
 	owner int
 	other int
+	admin int
 }
 
 func (a submissionTestAuth) VerifyToken(cookie string) (*jwt.Token, error) {
@@ -29,9 +30,30 @@ func (a submissionTestAuth) VerifyToken(cookie string) (*jwt.Token, error) {
 	case "other":
 		id = a.other
 	case "admin":
-		role = types.RoleAdmin
+		id, role = a.admin, types.RoleAdmin
 	}
 	return &jwt.Token{Valid: true, Claims: &types.CustomClaims{Id: id, Type: role}}, nil
+}
+
+func testReviewer(t *testing.T, ctx context.Context, pool *pgxpool.Pool) int {
+	t.Helper()
+	var id int
+	email := fmt.Sprintf("review-test-%d@example.invalid", time.Now().UnixNano())
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO admin_user (firstname, lastname, email, password) VALUES ('Test', 'Reviewer', $1, 'unused') RETURNING id
+	`, email).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func deleteTestReviewer(t *testing.T, pool *pgxpool.Pool, id int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := pool.Exec(ctx, "DELETE FROM admin_user WHERE id = $1", id); err != nil {
+		t.Errorf("clean reviewer: %v", err)
+	}
 }
 
 func TestSubmissionFlowPostgres(t *testing.T) {
@@ -91,7 +113,9 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	RegisterRoutes(mux, pool, submissionTestAuth{owner: owner, other: other}, "http://localhost:5173")
+	admin := testReviewer(t, ctx, pool)
+	defer deleteTestReviewer(t, pool, admin)
+	RegisterRoutes(mux, pool, submissionTestAuth{owner: owner, other: other, admin: admin}, "http://localhost:5173")
 	path := fmt.Sprintf("/api/v1/forms/%d/submission", form.ID)
 	requestAt := func(path, method, cookie, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)

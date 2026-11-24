@@ -9,7 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
+	"github.com/jackc/pgx/v5"
 )
 
 const reviewPageSize = 50
@@ -31,8 +34,9 @@ type reviewPage struct {
 
 type reviewDetail struct {
 	submission
-	UserName  string `json:"userName"`
-	UserEmail string `json:"userEmail"`
+	UserName              string `json:"userName"`
+	UserEmail             string `json:"userEmail"`
+	ApprovalRoleAvailable *bool  `json:"approvalRoleAvailable,omitempty"`
 }
 
 type reviewInput struct {
@@ -62,6 +66,14 @@ func (h handler) getReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.store.getReview(r.Context(), id)
+	if action := result.Definition.ApprovalAction; err == nil && result.Status == "submitted" && action != nil && action.Kind == "assign_role" {
+		_, err = access.ApprovalRole(r.Context(), h.store.db, action.RoleID, action.Role)
+		available := err == nil
+		result.ApprovalRoleAvailable = &available
+		if errors.Is(err, pgx.ErrNoRows) {
+			err = nil
+		}
+	}
 	writeResult(w, http.StatusOK, result, err)
 }
 
@@ -112,7 +124,16 @@ func (h handler) reviewSubmission(w http.ResponseWriter, r *http.Request) {
 		err = result.readReview(feedback)
 	}
 	if err == nil && input.Decision == "approved" {
-		err = recordVerification(r.Context(), tx, id, result.Definition.ApprovalAction)
+		var roleID *int64
+		roleID, err = recordVerification(r.Context(), tx, id, result.Definition.ApprovalAction)
+		if action := result.Definition.ApprovalAction; action != nil && action.Kind == "assign_role" {
+			granted := roleID != nil
+			result.ApprovalRoleAvailable = &granted
+		}
+		if err == nil && roleID != nil {
+			actor, _ := middlewares.Session(r.Context())
+			err = access.Audit(r.Context(), tx, actor, "approval.granted", map[string]any{"submissionId": id, "roleId": *roleID})
+		}
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())
