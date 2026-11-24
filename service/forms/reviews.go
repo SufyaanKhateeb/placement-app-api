@@ -89,8 +89,14 @@ func (h handler) reviewSubmission(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJsonError(w, http.StatusBadRequest, err)
 		return
 	}
+	tx, err := h.store.db.Begin(r.Context())
+	if err != nil {
+		writeResult(w, http.StatusOK, nil, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
 	var feedback []byte
-	err = h.store.db.QueryRow(r.Context(), `
+	err = tx.QueryRow(r.Context(), `
         UPDATE form_submissions
         SET status = $3, requested_changes = $4, revision = revision + 1
         WHERE id = $1 AND revision = $2 AND status = 'submitted'
@@ -104,6 +110,12 @@ func (h handler) reviewSubmission(w http.ResponseWriter, r *http.Request) {
 		result.Changes = nil
 		result.Comment = nil
 		err = result.readReview(feedback)
+	}
+	if err == nil && input.Decision == "approved" {
+		err = recordVerification(r.Context(), tx, id, result.Definition.ApprovalAction)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
 	}
 	writeResult(w, http.StatusOK, result, err)
 }

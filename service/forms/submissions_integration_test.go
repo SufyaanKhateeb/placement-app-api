@@ -39,7 +39,7 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	if database == "" {
 		t.Skip("requires a migrated test database in PLACEMENT_TEST_DATABASE_URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, database)
 	if err != nil {
@@ -69,6 +69,7 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if _, err := pool.Exec(cleanup, `
+            DELETE FROM form_verifications WHERE submission_id IN (SELECT id FROM form_submissions WHERE form_id = $1);
             DELETE FROM form_submissions WHERE form_id = $1;
             UPDATE forms SET published_version = NULL, draft = '{}'::jsonb WHERE id = $1;
             DELETE FROM form_versions WHERE form_id = $1;

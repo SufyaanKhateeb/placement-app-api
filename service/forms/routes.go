@@ -80,7 +80,12 @@ func (h handler) getPublished(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	form, err := h.store.getPublished(r.Context(), id)
+	session, _ := middlewares.Session(r.Context())
+	var userID *int
+	if session.Type == types.RoleUser {
+		userID = &session.Id
+	}
+	form, err := readPublished(r.Context(), h.store.db, id, userID)
 	writeResult(w, http.StatusOK, form, err)
 }
 
@@ -190,7 +195,7 @@ func writeResult(w http.ResponseWriter, status int, result any, err error) {
 		utils.WriteJsonError(w, http.StatusConflict, err)
 	case errors.Is(err, errNotFound):
 		utils.WriteJsonError(w, http.StatusNotFound, err)
-	case errors.Is(err, errEmptyForm):
+	case errors.Is(err, errEmptyForm), errors.Is(err, errInvalidFollowUp):
 		utils.WriteJsonError(w, http.StatusBadRequest, err)
 	default:
 		var databaseError interface{ SQLState() string }

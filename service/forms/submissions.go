@@ -125,22 +125,18 @@ func (s store) submit(ctx context.Context, id int64, user int, input submissionI
 	defer tx.Rollback(ctx)
 
 	// Share the form lock with other submitters and serialize against publishing.
-	var result submission
-	err = tx.QueryRow(ctx, `
-        SELECT published_version FROM forms
-        WHERE id = $1 AND published_version IS NOT NULL FOR SHARE
-    `, id).Scan(&result.Version)
+	var lockedID int64
+	err = tx.QueryRow(ctx, `SELECT id FROM forms WHERE id = $1 FOR SHARE`, id).Scan(&lockedID)
 	if err != nil {
 		return submission{}, replaceNoRows(err, errNotFound)
 	}
-	if result.Version != input.Version {
-		return submission{}, errPublishedVersionChanged
-	}
-	err = tx.QueryRow(ctx, `
-        SELECT definition FROM form_versions WHERE form_id = $1 AND version = $2
-    `, id, result.Version).Scan(&result.Definition)
+	published, err := readPublished(ctx, tx, id, &user)
 	if err != nil {
 		return submission{}, err
+	}
+	result := submission{Version: published.Version, Definition: published.Definition}
+	if result.Version != input.Version {
+		return submission{}, errPublishedVersionChanged
 	}
 
 	result.Values, err = checkedAnswers(result.Definition, input.Values)

@@ -20,15 +20,20 @@ type Field struct {
 }
 
 type Definition struct {
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Fields      []Field `json:"fields"`
+	ApprovalAction        *ApprovalAction `json:"approvalAction,omitempty"`
+	RequiresApprovalGrant bool            `json:"requiresApprovalGrant,omitempty"`
+	Title                 string          `json:"title"`
+	Description           string          `json:"description"`
+	Fields                []Field         `json:"fields"`
 }
 
 var fieldIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 var decimalPattern = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$`)
 
 func (d *Definition) validate() error {
+	if err := d.ApprovalAction.validate(); err != nil {
+		return err
+	}
 	d.Title = strings.TrimSpace(d.Title)
 	if d.Title == "" || utf8.RuneCountInString(d.Title) > 120 {
 		return errors.New("enter a form title of 1 to 120 characters")
