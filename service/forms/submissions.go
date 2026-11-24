@@ -24,6 +24,8 @@ type submission struct {
 	SubmittedAt time.Time                  `json:"submittedAt"`
 	Definition  Definition                 `json:"definition"`
 	Values      map[string]json.RawMessage `json:"values"`
+	Changes     map[string]string          `json:"changes,omitempty"`
+	Comment     []reviewPart               `json:"comment,omitempty"`
 }
 
 type submissionInput struct {
@@ -88,7 +90,7 @@ func (h handler) submitAnswers(revision bool) http.HandlerFunc {
 }
 
 const submissionByUser = `
-    SELECT s.id, s.form_version, s.revision, s.status, s.submitted_at, v.definition, s.answers
+    SELECT s.id, s.form_version, s.revision, s.status, s.submitted_at, v.definition, s.answers, s.requested_changes
     FROM form_submissions s
     JOIN form_versions v ON v.form_id = s.form_id AND v.version = s.form_version
     WHERE s.form_id = $1 AND s.user_id = $2
@@ -96,8 +98,12 @@ const submissionByUser = `
 
 func scanSubmission(row pgx.Row) (submission, error) {
 	var result submission
-	err := row.Scan(&result.ID, &result.Version, &result.Revision, &result.Status, &result.SubmittedAt, &result.Definition, &result.Values)
-	return result, err
+	var feedback []byte
+	err := row.Scan(&result.ID, &result.Version, &result.Revision, &result.Status, &result.SubmittedAt, &result.Definition, &result.Values, &feedback)
+	if err != nil {
+		return result, err
+	}
+	return result, result.readReview(feedback)
 }
 
 func (s store) getSubmission(ctx context.Context, id int64, user int) (*submission, error) {

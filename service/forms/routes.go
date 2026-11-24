@@ -40,6 +40,9 @@ func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthSer
 	mux.Handle("POST /api/v1/admin/forms/{id}/draft", admin(h.fromFrontend(h.revisionAction(h.store.editPublished))))
 	mux.Handle("POST /api/v1/admin/forms/{id}/publish", admin(h.fromFrontend(h.revisionAction(h.store.publish))))
 	mux.Handle("POST /api/v1/admin/forms/preview", admin(h.fromFrontend(h.preview)))
+	mux.Handle("GET /api/v1/admin/submissions", admin(h.listReviews))
+	mux.Handle("GET /api/v1/admin/submissions/{id}", admin(h.getReview))
+	mux.Handle("PUT /api/v1/admin/submissions/{id}/review", admin(h.fromFrontend(h.reviewSubmission)))
 }
 
 func (h handler) fromFrontend(next http.HandlerFunc) http.HandlerFunc {

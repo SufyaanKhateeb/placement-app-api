@@ -92,7 +92,7 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, pool, submissionTestAuth{owner: owner, other: other}, "http://localhost:5173")
 	path := fmt.Sprintf("/api/v1/forms/%d/submission", form.ID)
-	request := func(method, cookie, body string) *httptest.ResponseRecorder {
+	requestAt := func(path, method, cookie, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body)).WithContext(ctx)
 		if cookie != "" {
 			req.AddCookie(&http.Cookie{Name: "ACCESS_TOKEN", Value: cookie})
@@ -102,6 +102,9 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 		result := httptest.NewRecorder()
 		mux.ServeHTTP(result, req)
 		return result
+	}
+	request := func(method, cookie, body string) *httptest.ResponseRecorder {
+		return requestAt(path, method, cookie, body)
 	}
 	check := func(response *httptest.ResponseRecorder, status int, contains string) {
 		t.Helper()
@@ -142,9 +145,19 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	check(request(http.MethodGet, "owner", ""), http.StatusOK, "ABC")
 	check(request(http.MethodPut, "owner", `{"version":1,"revision":1,"values":{"code":"XYZ"}}`), http.StatusConflict, "submission_changed")
 
-	if _, err := pool.Exec(ctx, "UPDATE form_submissions SET status = 'changes_requested' WHERE id = $1", original.ID); err != nil {
-		t.Fatal(err)
-	}
+	const queuePath = "/api/v1/admin/submissions"
+	detailPath := fmt.Sprintf("%s/%d", queuePath, original.ID)
+	decisionPath := detailPath + "/review"
+	check(requestAt(queuePath, http.MethodGet, "owner", ""), http.StatusFound, "")
+	check(requestAt(detailPath, http.MethodGet, "other", ""), http.StatusFound, "")
+	check(requestAt(decisionPath, http.MethodPut, "owner", `{"revision":1,"decision":"approved"}`), http.StatusFound, "")
+	check(requestAt(queuePath, http.MethodGet, "admin", ""), http.StatusOK, "Submission test")
+	check(requestAt(detailPath, http.MethodGet, "admin", ""), http.StatusOK, "ABC")
+	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":1,"decision":"changes_requested","comment":[{"fieldId":"unknown"},{"text":" try again"}]}`), http.StatusBadRequest, "submitted version")
+	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":1,"decision":"changes_requested","comment":[{"text":"Use a different code for "},{"fieldId":"code"}]}`), http.StatusOK, "changes_requested")
+	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":1,"decision":"approved"}`), http.StatusConflict, "reload")
+	check(request(http.MethodGet, "owner", ""), http.StatusOK, `"fieldId":"code"`)
+	check(request(http.MethodGet, "owner", ""), http.StatusOK, "Use a different code")
 	draft, err := s.editPublished(ctx, form.ID, form.Revision)
 	if err != nil {
 		t.Fatal(err)
@@ -160,14 +173,17 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 
 	check(request(http.MethodPost, "other", valid), http.StatusConflict, "version_changed")
 	check(request(http.MethodPost, "owner", `{"version":2,"values":{"code":"123"}}`), http.StatusConflict, "already_submitted")
-	result := request(http.MethodPut, "owner", `{"version":1,"revision":1,"values":{"code":"XYZ"}}`)
+	result := request(http.MethodPut, "owner", `{"version":1,"revision":2,"values":{"code":"XYZ"}}`)
 	check(result, http.StatusOK, `"status":"submitted"`)
 	var updated submission
 	if err := json.Unmarshal(result.Body.Bytes(), &updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.ID != original.ID || updated.Version != original.Version || updated.Revision != 2 {
+	if updated.ID != original.ID || updated.Version != original.Version || updated.Revision != 3 {
 		t.Fatalf("resubmission did not retain the original record and version: %+v", updated)
 	}
-	check(request(http.MethodPut, "owner", `{"version":1,"revision":1,"values":{"code":"XYZ"}}`), http.StatusConflict, "submission_changed")
+	check(request(http.MethodPut, "owner", `{"version":1,"revision":2,"values":{"code":"XYZ"}}`), http.StatusConflict, "submission_changed")
+	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":3,"decision":"approved"}`), http.StatusOK, `"status":"approved"`)
+	check(request(http.MethodGet, "owner", ""), http.StatusOK, `"status":"approved"`)
+	check(request(http.MethodPut, "owner", `{"version":1,"revision":4,"values":{"code":"XYZ"}}`), http.StatusConflict, "submission_changed")
 }
