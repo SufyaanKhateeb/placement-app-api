@@ -1,0 +1,96 @@
+name: Release to Vercel
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_commit:
+        description: Full commit SHA from the UI main branch
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vercel-production
+  cancel-in-progress: false
+
+jobs:
+  check-api:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+  release:
+    needs: check-api
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: SufyaanKhateeb/placement-app-ui
+          ref: main
+          path: web
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ secrets.UI_CHECKOUT_TOKEN || github.token }}
+      - name: Select the reviewed frontend commit
+        env:
+          FRONTEND_COMMIT: ${{ inputs.frontend_commit }}
+        run: |
+          if [[ ! "$FRONTEND_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Provide the full lowercase SHA of a commit on the UI main branch." >&2
+            exit 1
+          fi
+          git -C web merge-base --is-ancestor "$FRONTEND_COMMIT" HEAD
+          git -C web checkout --detach "$FRONTEND_COMMIT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Verify required release settings
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+          PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_ORIGIN }}
+        run: |
+          for name in VERCEL_ORG_ID VERCEL_PROJECT_ID VERCEL_TOKEN MIGRATION_DATABASE_URL PRODUCTION_ORIGIN; do
+            if [[ -z "${!name}" ]]; then
+              echo "$name is required to release." >&2
+              exit 1
+            fi
+          done
+          [[ "$PRODUCTION_ORIGIN" == https://* ]]
+      - run: npm install --global vercel@66.6.0
+      - name: Build the combined project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VITE_BACKEND_URL: /api/v1
+        run: |
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+      - name: Apply database migrations
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: go run ./cmd/migrate up
+      - name: Deploy to Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+      - name: Verify frontend and Go API
+        env:
+          PRODUCTION_ORIGIN: ${{ vars.PRODUCTION_ORIGIN }}
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --max-time 20 "${PRODUCTION_ORIGIN%/}/" > /dev/null
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --max-time 20 "${PRODUCTION_ORIGIN%/}/api/v1/auth/providers" |
+            jq -e '.google | type == "boolean"'

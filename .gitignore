@@ -6,3 +6,9 @@ bin/
 .neon
 node_modules/
 .env.local
+
+.vercel/
+/web/
+
+.vercel
+.env*

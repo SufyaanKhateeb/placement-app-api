@@ -2,6 +2,8 @@ package user
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +20,15 @@ func TestUserServiceHandlers(t *testing.T) {
 	userService := NewUserService(&userStore)
 	authService := &auth.AuthService{}
 	handler := NewHandler(userService, authService)
-	config.InitConfigWith("../../test.env")
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := config.Env
+	t.Cleanup(func() { config.Env = previous })
+	config.Env.PrivateKey = key
+	config.Env.PublicKey = &key.PublicKey
+	config.Env.JWTExpirationTime = 300
 
 	t.Run("should fail if the user payload is invalid", func(t *testing.T) {
 		payload := types.RegisterUserPayload{
