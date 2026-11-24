@@ -38,7 +38,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string) {
 func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 	session, ok := middlewares.Session(r.Context())
 	if !ok {
-		http.Redirect(w, r, "/login", http.StatusFound)
+		utils.WriteJsonError(w, http.StatusUnauthorized, errors.New("authentication required"))
 		return
 	}
 

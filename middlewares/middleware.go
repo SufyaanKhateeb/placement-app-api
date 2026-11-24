@@ -13,6 +13,11 @@ import (
 
 type sessionKey struct{}
 
+var (
+	errAuthenticationRequired = errors.New("authentication required")
+	errPermissionDenied       = errors.New("insufficient permissions")
+)
+
 func Session(ctx context.Context) (types.TokenInput, bool) {
 	session, ok := ctx.Value(sessionKey{}).(types.TokenInput)
 	return session, ok
@@ -27,27 +32,30 @@ func Authenticate(auth types.AuthService, requiredRole string) func(http.Handler
 				cookie, err = r.Cookie("REFRESH_TOKEN")
 			}
 			if err != nil {
-				http.Redirect(w, r, "/login", http.StatusFound)
+				utils.WriteJsonError(w, http.StatusUnauthorized, errAuthenticationRequired)
 				return
 			}
 
 			token, err := auth.VerifyToken(cookie.Value)
 			if err != nil || token == nil || !token.Valid {
-				http.Redirect(w, r, "/login", http.StatusFound)
+				utils.WriteJsonError(w, http.StatusUnauthorized, errAuthenticationRequired)
 				return
 			}
 			claims, ok := token.Claims.(*types.CustomClaims)
 			if !ok || claims.Id <= 0 {
-				http.Redirect(w, r, "/login", http.StatusFound)
+				utils.WriteJsonError(w, http.StatusUnauthorized, errAuthenticationRequired)
 				return
 			}
 			role := claims.Type
 			if role == types.LegacyRoleStudent {
 				role = types.RoleUser
 			}
-			if (role != types.RoleUser && role != types.RoleAdmin) ||
-				(requiredRole != "" && role != requiredRole) {
-				http.Redirect(w, r, "/login", http.StatusFound)
+			if role != types.RoleUser && role != types.RoleAdmin {
+				utils.WriteJsonError(w, http.StatusUnauthorized, errAuthenticationRequired)
+				return
+			}
+			if requiredRole != "" && role != requiredRole {
+				utils.WriteJsonError(w, http.StatusForbidden, errPermissionDenied)
 				return
 			}
 			if refresh {

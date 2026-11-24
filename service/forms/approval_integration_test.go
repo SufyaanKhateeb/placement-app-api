@@ -147,7 +147,7 @@ func TestApprovalGrantsPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, "SELECT role_key FROM form_verifications WHERE submission_id=$1", afterID).Scan(&role); err != nil || role != "verified-member" {
 		t.Fatalf("missing assigned role: %q (%v)", role, err)
 	}
-	request(http.MethodGet, "/api/v1/admin/forms", "other", "", http.StatusFound)
+	request(http.MethodGet, "/api/v1/admin/forms", "other", "", http.StatusForbidden)
 }
 
 func TestApprovalActionRejectsBuiltInRole(t *testing.T) {

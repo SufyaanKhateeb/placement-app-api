@@ -120,8 +120,8 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 		t.Fatalf("admin browsing received a personal status: %s", body)
 	}
 	valid := `{"version":1,"values":{"code":"ABC","unknown":"discard"}}`
-	check(request(http.MethodPost, "", valid), http.StatusFound, "")
-	check(request(http.MethodPost, "admin", valid), http.StatusFound, "")
+	check(request(http.MethodPost, "", valid), http.StatusUnauthorized, "")
+	check(request(http.MethodPost, "admin", valid), http.StatusForbidden, "")
 	check(request(http.MethodPost, "owner", `{"version":1,"values":{"code":"invalid"}}`), http.StatusUnprocessableEntity, `"code":`)
 	check(request(http.MethodPost, "owner", `{"version":1,"values":{}}`), http.StatusUnprocessableEntity, "This field is required")
 
@@ -156,9 +156,9 @@ func TestSubmissionFlowPostgres(t *testing.T) {
 	const queuePath = "/api/v1/admin/submissions"
 	detailPath := fmt.Sprintf("%s/%d", queuePath, original.ID)
 	decisionPath := detailPath + "/review"
-	check(requestAt(queuePath, http.MethodGet, "owner", ""), http.StatusFound, "")
-	check(requestAt(detailPath, http.MethodGet, "other", ""), http.StatusFound, "")
-	check(requestAt(decisionPath, http.MethodPut, "owner", `{"revision":1,"decision":"approved"}`), http.StatusFound, "")
+	check(requestAt(queuePath, http.MethodGet, "owner", ""), http.StatusForbidden, "")
+	check(requestAt(detailPath, http.MethodGet, "other", ""), http.StatusForbidden, "")
+	check(requestAt(decisionPath, http.MethodPut, "owner", `{"revision":1,"decision":"approved"}`), http.StatusForbidden, "")
 	check(requestAt(queuePath, http.MethodGet, "admin", ""), http.StatusOK, "Submission test")
 	check(requestAt(detailPath, http.MethodGet, "admin", ""), http.StatusOK, "ABC")
 	check(requestAt(decisionPath, http.MethodPut, "admin", `{"revision":1,"decision":"changes_requested","comment":[{"fieldId":"unknown"},{"text":" try again"}]}`), http.StatusBadRequest, "submitted version")
