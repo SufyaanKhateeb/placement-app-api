@@ -1,0 +1,8 @@
+.env
+.env.*
+*.env
+*.key
+*.pem
+.neon/
+web/.env
+web/.env.*

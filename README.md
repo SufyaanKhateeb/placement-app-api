@@ -50,3 +50,15 @@ Saves and publish requests include the revision the admin reviewed. A stale revi
 
 The active published version is available to signed-in users. Per-form eligibility, attribute mapping, and submission are separate features.
 Field validation rules are part of the draft and each published snapshot. Text fields can set character limits and a Go regex pattern. Whole numbers, precise decimals, dates, and timestamps can set inclusive bounds. Timestamp bounds are stored with an offset, and the editor displays them in the administrator's local time zone. Existing forms without rules continue to use required and type validation.
+## Vercel deployment
+
+The React UI and Go API are released to one Vercel project at one HTTPS origin. The repositories remain separate. The release workflow checks out a specific UI commit into `web/`, builds it, and packages the Go Function in `api/index.go`. The original `go run ./cmd` server is still the local entry point. PostgreSQL remains on Neon.
+
+### One-time setup
+
+1. Create an **Other** framework Vercel project and link it from the API checkout with `vercel login` and `vercel link`. Use GitHub Actions as the deployment source. A standalone Git deployment of the API repository would have no UI checkout in `web/`.
+2. In the Vercel project's **Production** environment, set `DATABASE_URL` to the Neon pooled connection string, `FRONTEND_ORIGIN` to the final HTTPS origin, and `JWT_PRIVATE_KEY_PEM` to a deployment RSA private key (at least 2048 bits). The function derives its verification key from the private key. Set `GOOGLE_OIDC_CLIENT_ID`, `GOOGLE_OIDC_CLIENT_SECRET`, and `GOOGLE_OIDC_REDIRECT_URL` together to enable Google sign-in. Register the exact same `https://<app-host>/api/v1/auth/google/callback` URI with Google.
+3. In the API repo's GitHub Actions **production** environment, set secrets `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `VERCEL_TOKEN`, and `MIGRATION_DATABASE_URL` (Neon's direct connection to the same deployed database). Set the variable `PRODUCTION_ORIGIN` to the same HTTPS origin. If the UI repo is private, provide a read-only `UI_CHECKOUT_TOKEN` covering that repository.
+4. From the API repo, run **Release to Vercel** on `main` and enter the full SHA of a reviewed UI `main` commit. The workflow runs tests, builds both components, applies pending migrations, deploys, and checks the public routes. Keep the credentials in Vercel and GitHub secrets.
+
+For local Vite development, keep `VITE_BACKEND_URL=http://localhost:8091/api/v1` or the URL for your local Go server. The deployed UI uses the relative path `/api/v1`.

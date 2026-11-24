@@ -32,14 +32,22 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 	})(mux)
 }
 
-func Run(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {
+func NewHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string) (http.Handler, error) {
 	google, err := auth.NewGoogleSignIn(ctx, user.NewStore(db), &auth.AuthService{}, frontendOrigin)
+	if err != nil {
+		return nil, err
+	}
+	return newHandler(db, frontendOrigin, google), nil
+}
+
+func Run(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {
+	handler, err := NewHandler(ctx, db, frontendOrigin)
 	if err != nil {
 		return err
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           newHandler(db, frontendOrigin, google),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

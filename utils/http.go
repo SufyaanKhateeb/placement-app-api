@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/SufyaanKhateeb/college-placement-app-api/config"
 )
 
 func ParseJson(r *http.Request, payload any) error {
@@ -31,6 +34,8 @@ func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expiratio
 		Name:     key,
 		Value:    token,
 		HttpOnly: true,
+		Secure:   strings.HasPrefix(config.Env.FrontendOrigin, "https://"),
+		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(expirationTime),
 		Path:     "/",
 		MaxAge:   int(expirationTime.Seconds()),
