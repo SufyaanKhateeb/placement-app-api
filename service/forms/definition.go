@@ -108,7 +108,7 @@ func validFieldValue(fieldType string, raw json.RawMessage) bool {
 	}
 	switch fieldType {
 	case "text":
-		return strings.TrimSpace(value) != "" && utf8.RuneCountInString(value) <= 4000
+		return strings.TrimSpace(value) != "" && !strings.ContainsRune(value, 0) && utf8.RuneCountInString(value) <= 4000
 	case "numeric":
 		return validDecimal(value)
 	case "date":

@@ -25,6 +25,11 @@ func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthSer
 	h := handler{store: store{db: db}, origin: origin}
 	user := middlewares.Authenticate(sessions, "")
 	admin := middlewares.Authenticate(sessions, types.RoleAdmin)
+	submitter := middlewares.Authenticate(sessions, types.RoleUser)
+
+	mux.Handle("GET /api/v1/forms/{id}/submission", submitter(h.getMySubmission))
+	mux.Handle("POST /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(false))))
+	mux.Handle("PUT /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(true))))
 
 	mux.Handle("GET /api/v1/forms", user(h.list(false)))
 	mux.Handle("GET /api/v1/forms/{id}", user(h.getPublished))
@@ -153,11 +158,15 @@ func validRevision(w http.ResponseWriter, revision int64) bool {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, input any) bool {
+	return readJSONWithLimit(w, r, input, 128<<10)
+}
+
+func readJSONWithLimit(w http.ResponseWriter, r *http.Request, input any, limit int64) bool {
 	if mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mediaType != "application/json" {
 		utils.WriteJsonError(w, http.StatusUnsupportedMediaType, errors.New("send a JSON request"))
 		return false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(input) != nil || decoder.Decode(new(any)) != io.EOF {
 		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid JSON request"))
