@@ -46,3 +46,19 @@ func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expiratio
 	}
 	http.SetCookie(w, cookie)
 }
+
+func AdminInvitationCookie(origin, token string, lifetime time.Duration) *http.Cookie {
+	secure := strings.HasPrefix(origin, "https://")
+	name := "placement_admin_invitation"
+	if secure {
+		name = "__Host-" + name
+	}
+	maxAge := int(lifetime.Seconds())
+	if maxAge <= 0 {
+		maxAge = -1
+	}
+	return &http.Cookie{
+		Name: name, Value: token, Path: "/", MaxAge: maxAge,
+		Secure: secure, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	}
+}

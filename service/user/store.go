@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,22 +22,6 @@ func NewStore(db *pgxpool.Pool) *Store {
 
 func (s *Store) CheckUserWithEmailExists(email string) (bool, error) {
 	rows, err := s.db.Query(context.Background(), "select exists(select id from app_user where email = $1)", email)
-	if err != nil {
-		return true, err
-	}
-
-	exists := true
-	for rows.Next() {
-		err = rows.Scan(&exists)
-		if err != nil {
-			return true, err
-		}
-	}
-	return exists, nil
-}
-
-func (s *Store) CheckAdminUserWithEmailExists(email string) (bool, error) {
-	rows, err := s.db.Query(context.Background(), "select exists(select id from admin_user where email = $1)", email)
 	if err != nil {
 		return true, err
 	}
@@ -178,35 +163,24 @@ func (s *Store) GetAdminById(id int) (*types.AdminUser, error) {
 }
 
 func (s *Store) CreateUser(u types.User) (int, error) {
-	var lastInserId int
-	rows, err := s.db.Query(context.Background(), "insert into app_user (firstName, lastName, email, password) values ($1,$2,$3,$4) returning id", u.FirstName, u.LastName, u.Email, u.Password)
+	ctx := context.Background()
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return 0, err
 	}
-
-	// get the id of the created user
-	rows.Next()
-	err = rows.Scan(&lastInserId)
-	if err != nil {
-		return lastInserId, err
-	}
-
-	return lastInserId, nil
-}
-
-func (s *Store) CreateAdminUser(u types.AdminUser) (int, error) {
-	var lastInserId int
-	rows, err := s.db.Query(context.Background(), "insert into admin_user (firstName, lastName, email, password) values ($1,$2,$3,$4) returning id", u.FirstName, u.LastName, u.Email, u.Password)
+	defer tx.Rollback(ctx)
+	email, err := access.LockAccountEmail(ctx, tx, u.Email)
 	if err != nil {
 		return 0, err
 	}
-
-	// get the id of the created user
-	rows.Next()
-	err = rows.Scan(&lastInserId)
-	if err != nil {
-		return lastInserId, err
+	if err := access.CheckSignupAddress(ctx, tx, email); err != nil {
+		return 0, err
 	}
-
-	return lastInserId, nil
+	var id int
+	err = tx.QueryRow(ctx, "INSERT INTO app_user (firstname, lastname, email, password) VALUES ($1,$2,$3,$4) RETURNING id",
+		u.FirstName, u.LastName, u.Email, u.Password).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, tx.Commit(ctx)
 }

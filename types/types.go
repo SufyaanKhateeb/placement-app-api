@@ -16,13 +16,11 @@ const (
 
 type UserStore interface {
 	CheckUserWithEmailExists(email string) (bool, error)
-	CheckAdminUserWithEmailExists(email string) (bool, error)
 	GetUserByEmail(email string) (*User, error)
 	GetAdminUserByEmail(email string) (*AdminUser, error)
 	GetUserById(id int) (*User, error)
 	GetAdminById(id int) (*AdminUser, error)
 	CreateUser(User) (int, error)
-	CreateAdminUser(AdminUser) (int, error)
 }
 
 type UserService interface {
@@ -33,7 +31,6 @@ type UserService interface {
 	LoginUser(ctx context.Context, payload *LoginUserPayload) (*User, *service.ServiceError)
 	LoginAdminUser(ctx context.Context, payload *LoginUserPayload) (*AdminUser, *service.ServiceError)
 	RegisterUser(ctx context.Context, payload *RegisterUserPayload) (*User, *service.ServiceError)
-	RegisterAdminUser(ctx context.Context, payload *RegisterUserPayload) (*AdminUser, *service.ServiceError)
 }
 
 type AuthService interface {
@@ -79,12 +76,18 @@ type TokenInput struct {
 	Id        int
 	Type      string
 	TokenData string
+	AdminMode bool
+}
+
+func (t TokenInput) IsAdmin() bool {
+	return t.Type == RoleAdmin || (t.Type == RoleUser && t.AdminMode)
 }
 
 type CustomClaims struct {
 	Id        int    `json:"id"`
 	Type      string `json:"type"`
 	TokenData string `json:"tokenData"`
+	AdminMode bool   `json:"adminMode,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -92,6 +95,7 @@ type UserDto struct {
 	Permissions []string `json:"permissions"`
 	Id          int      `json:"id"`
 	Role        string   `json:"role"`
+	AccountType string   `json:"accountType"`
 	UType       string   `json:"uType"`
 	FirstName   string   `json:"firstName"`
 	LastName    string   `json:"lastName"`

@@ -15,15 +15,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSignIn) http.Handler {
+func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSignIn, mailer access.InvitationMailer) http.Handler {
 	mux := http.NewServeMux()
 	google.RegisterRoutes(mux)
 	forms.RegisterRoutes(mux, db, &auth.AuthService{}, frontendOrigin)
-	userService := user.NewUserService(user.NewStore(db))
+	userStore := user.NewStore(db)
+	userService := user.NewUserService(userStore)
 	authService := &auth.AuthService{}
 	accessStore := access.Store{DB: db}
-	user.NewHandler(userService, authService).RegisterRoutes(mux, "/api/v1", accessStore.Resolve, frontendOrigin)
-	accessStore.RegisterRoutes(mux, authService, frontendOrigin)
+	users := user.NewHandler(userService, authService)
+	users.Store = userStore
+	users.RegisterRoutes(mux, "/api/v1", accessStore.Resolve, frontendOrigin)
+	accessStore.RegisterRoutes(mux, authService, frontendOrigin, mailer)
 
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   []string{frontendOrigin},
@@ -36,11 +39,15 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 }
 
 func NewHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string) (http.Handler, error) {
+	mailer, err := access.ReadInvitationMailer()
+	if err != nil {
+		return nil, err
+	}
 	google, err := auth.NewGoogleSignIn(ctx, user.NewStore(db), &auth.AuthService{}, frontendOrigin)
 	if err != nil {
 		return nil, err
 	}
-	return newHandler(db, frontendOrigin, google), nil
+	return newHandler(db, frontendOrigin, google, mailer), nil
 }
 
 func Run(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {

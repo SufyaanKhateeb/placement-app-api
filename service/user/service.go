@@ -2,10 +2,12 @@ package user
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/service"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 )
@@ -108,40 +110,9 @@ func (us *UserService) RegisterUser(ctx context.Context, payload *types.Register
 
 	id, err := us.Store.CreateUser(u)
 	if err != nil {
-		return nil, &service.ServiceError{Err: err, StatusCode: http.StatusInternalServerError}
-	} else {
-		u.Id = id
-	}
-
-	return &u, nil
-}
-
-func (us *UserService) RegisterAdminUser(ctx context.Context, payload *types.RegisterUserPayload) (*types.AdminUser, *service.ServiceError) {
-	// check if the user exists
-	exists, err := us.Store.CheckAdminUserWithEmailExists(payload.Email)
-	if err != nil {
-		return nil, &service.ServiceError{Err: err, StatusCode: http.StatusInternalServerError}
-	}
-	if exists {
-		return nil, &service.ServiceError{Err: fmt.Errorf("user with email %s already exists", payload.Email), StatusCode: http.StatusBadRequest}
-	}
-
-	// create a new user
-	hashedPassword, err := auth.HashPassword(payload.Password)
-
-	if err != nil {
-		return nil, &service.ServiceError{Err: err, StatusCode: http.StatusInternalServerError}
-	}
-
-	u := types.AdminUser{
-		FirstName: payload.FirstName,
-		LastName:  payload.LastName,
-		Email:     payload.Email,
-		Password:  hashedPassword,
-	}
-
-	id, err := us.Store.CreateAdminUser(u)
-	if err != nil {
+		if errors.Is(err, access.ErrInvitationRequired) {
+			return nil, &service.ServiceError{Err: err, StatusCode: http.StatusConflict}
+		}
 		return nil, &service.ServiceError{Err: err, StatusCode: http.StatusInternalServerError}
 	} else {
 		u.Id = id

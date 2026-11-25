@@ -51,6 +51,7 @@ type account struct {
 	ID    int    `json:"id"`
 	Name  string `json:"name"`
 	Email string `json:"email"`
+	Admin bool   `json:"admin"`
 }
 
 type accountRole struct {
@@ -128,11 +129,12 @@ func (s Store) catalog(ctx context.Context) (catalog, error) {
 
 func (s Store) accounts(ctx context.Context, search string) ([]account, error) {
 	rows, err := s.DB.Query(ctx, `
-		SELECT kind, id, name, email
+		SELECT kind, id, name, email, is_admin
 		FROM (
-			SELECT 'user' AS kind, id, concat_ws(' ', firstname, lastname) AS name, email FROM app_user
+			SELECT 'user' AS kind, id, concat_ws(' ', firstname, lastname) AS name, email,
+				EXISTS (SELECT 1 FROM admin_memberships WHERE user_id = id) AS is_admin FROM app_user
 			UNION ALL
-			SELECT 'admin', id, concat_ws(' ', firstname, lastname), email FROM admin_user
+			SELECT 'admin', id, concat_ws(' ', firstname, lastname), email, TRUE FROM admin_user
 		) a
 		WHERE strpos(lower(email), lower($1)) > 0 OR strpos(lower(name), lower($1)) > 0
 		ORDER BY lower(name), kind, id LIMIT 40
@@ -145,9 +147,11 @@ func (s Store) accounts(ctx context.Context, search string) ([]account, error) {
 
 func (s Store) accountRoles(ctx context.Context, kind string, id int) ([]accountRole, error) {
 	rows, err := s.DB.Query(ctx, `
-		SELECT r.id, r.name, NULL::bigint, TRUE, FALSE
-		FROM access_assignments a JOIN access_roles r ON r.id = a.role_id
-		WHERE a.account_type = $1 AND a.account_id = $2
+		SELECT r.id, r.name, NULL::bigint, TRUE, FALSE FROM access_roles r
+		WHERE r.id IN (
+			SELECT role_id FROM access_assignments WHERE account_type = $1 AND account_id = $2
+			UNION ALL SELECT role_id FROM admin_membership_roles WHERE $1 = 'user' AND user_id = $2
+		)
 		UNION ALL
 		SELECT r.id, r.name, sub.id, v.access_role_revoked_at IS NULL AND `+safeApprovalRole+`, v.access_role_revoked_at IS NOT NULL
 		FROM form_submissions sub JOIN form_verifications v ON v.submission_id = sub.id
@@ -185,20 +189,32 @@ func Audit(ctx context.Context, tx pgx.Tx, actor types.TokenInput, action string
 }
 
 func (s Store) change(ctx context.Context, actor types.TokenInput, fn func(pgx.Tx) error) error {
+	return s.changeWithPermission(ctx, actor, ManageRoles, fn)
+}
+
+func lockManagement(ctx context.Context, tx pgx.Tx) error {
+	// Serialize changes with the last-manager and current-permission checks.
+	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(21, 1)")
+	return err
+}
+
+func (s Store) changeWithPermission(ctx context.Context, actor types.TokenInput, permission string, fn func(pgx.Tx) error) error {
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	// Serialize role and grant administration, including the last-manager check.
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(21, 1)"); err != nil {
+	if err := lockManagement(ctx, tx); err != nil {
 		return err
 	}
 	permissions, err := resolvePermissions(ctx, tx, actor)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errDenied
+	}
 	if err != nil {
 		return err
 	}
-	if actor.Type != types.RoleAdmin || !slices.Contains(permissions, ManageRoles) {
+	if !actor.IsAdmin() || !slices.Contains(permissions, permission) {
 		return errDenied
 	}
 	if err := fn(tx); err != nil {
@@ -284,29 +300,52 @@ func changeRole(ctx context.Context, tx pgx.Tx, actor types.TokenInput, id int64
 
 func changeAssignment(ctx context.Context, tx pgx.Tx, actor types.TokenInput, kind string, id int, roleID int64, assign bool) error {
 	var key string
+	var promoted bool
 	if err := tx.QueryRow(ctx, `
-		SELECT r.key FROM access_roles r CROSS JOIN access_accounts a
+		SELECT r.key, EXISTS (SELECT 1 FROM admin_memberships WHERE user_id = a.user_id)
+		FROM access_roles r CROSS JOIN access_accounts a
 		WHERE r.id = $1 AND a.account_type = $2 AND a.account_id = $3
-	`, roleID, kind, id).Scan(&key); err != nil {
+	`, roleID, kind, id).Scan(&key, &promoted); err != nil {
 		return err
 	}
-	if key == "role-manager" && kind != types.RoleAdmin {
+	if key == "role-manager" && kind != types.RoleAdmin && !promoted {
 		return errAdminRequired
 	}
 	action := "role.assigned"
 	if assign {
-		result, err := tx.Exec(ctx, "INSERT INTO access_assignments VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", kind, id, roleID)
+		query := "INSERT INTO access_assignments VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
+		if promoted {
+			query = `INSERT INTO admin_membership_roles (user_id, role_id)
+				SELECT $2::integer, $3::bigint WHERE NOT EXISTS (
+					SELECT 1 FROM access_assignments WHERE account_type = $1 AND account_id = $2 AND role_id = $3
+				) ON CONFLICT DO NOTHING`
+		}
+		result, err := tx.Exec(ctx, query, kind, id, roleID)
 		if err != nil || result.RowsAffected() == 0 {
 			return err
 		}
 	} else {
 		result, err := tx.Exec(ctx, "DELETE FROM access_assignments WHERE account_type = $1 AND account_id = $2 AND role_id = $3", kind, id, roleID)
-		if err != nil || result.RowsAffected() == 0 {
+		if err != nil {
 			return err
+		}
+		removed := result.RowsAffected()
+		if promoted {
+			result, err := tx.Exec(ctx, "DELETE FROM admin_membership_roles WHERE user_id = $1 AND role_id = $2", id, roleID)
+			if err != nil {
+				return err
+			}
+			removed += result.RowsAffected()
+		}
+		if removed == 0 {
+			return nil
 		}
 		if key == "role-manager" {
 			var remaining bool
-			err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM access_assignments WHERE role_id = $1 AND account_type = 'admin')", roleID).Scan(&remaining)
+			err := tx.QueryRow(ctx, `
+				SELECT EXISTS (SELECT 1 FROM access_assignments WHERE role_id = $1 AND account_type = 'admin')
+					OR EXISTS (SELECT 1 FROM admin_membership_roles WHERE role_id = $1)
+			`, roleID).Scan(&remaining)
 			if err != nil {
 				return err
 			}

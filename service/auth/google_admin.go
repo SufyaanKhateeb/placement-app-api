@@ -19,7 +19,7 @@ var (
 )
 
 func (g *GoogleSignIn) startAdmin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, g.begin(w, googleAdminFlow, 0), http.StatusFound)
+	http.Redirect(w, r, g.begin(w, googleAdminFlow, "0"), http.StatusFound)
 }
 
 func (g *GoogleSignIn) startAdminLink(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +28,7 @@ func (g *GoogleSignIn) startAdminLink(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJsonError(w, http.StatusForbidden, errors.New("invalid request origin"))
 		return
 	}
-	adminID, ok := g.activeAdminID(r)
+	admin, ok := g.activeAdmin(r)
 	if !ok {
 		utils.WriteJsonError(w, http.StatusUnauthorized, errors.New("sign in as an admin to connect Google"))
 		return
@@ -42,7 +42,7 @@ func (g *GoogleSignIn) startAdminLink(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("admin password is required"))
 		return
 	}
-	if err := g.accounts.CheckGoogleAdminPassword(r.Context(), adminID, input.Password); err != nil {
+	if err := g.accounts.CheckGoogleAdminPassword(r.Context(), admin, input.Password); err != nil {
 		if errors.Is(err, ErrGoogleAdminPassword) {
 			utils.WriteJsonError(w, http.StatusForbidden, ErrGoogleAdminPassword)
 		} else {
@@ -50,39 +50,47 @@ func (g *GoogleSignIn) startAdminLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	utils.WriteJson(w, http.StatusOK, map[string]string{"url": g.begin(w, googleAdminLinkFlow, adminID)})
+	utils.WriteJson(w, http.StatusOK, map[string]string{"url": g.begin(w, googleAdminLinkFlow, adminReference(admin))})
 }
 
-func (g *GoogleSignIn) activeAdminID(r *http.Request) (int, bool) {
+func (g *GoogleSignIn) activeAdmin(r *http.Request) (types.TokenInput, bool) {
 	cookie, err := r.Cookie("ACCESS_TOKEN")
 	if err != nil {
-		return 0, false
+		return types.TokenInput{}, false
 	}
 	token, err := g.sessions.VerifyToken(cookie.Value)
 	if err != nil || token == nil || !token.Valid {
-		return 0, false
+		return types.TokenInput{}, false
 	}
 	claims, ok := token.Claims.(*types.CustomClaims)
-	if !ok || claims.Id <= 0 || claims.Type != types.RoleAdmin {
-		return 0, false
+	if !ok || claims.Id <= 0 {
+		return types.TokenInput{}, false
 	}
-	return claims.Id, true
+	admin := types.TokenInput{Id: claims.Id, Type: claims.Type, AdminMode: claims.AdminMode}
+	return admin, admin.IsAdmin()
 }
 
-func (g *GoogleSignIn) adminLinkID(r *http.Request, flowID string) (int, bool) {
-	id, err := strconv.Atoi(flowID)
-	active, ok := g.activeAdminID(r)
-	return id, err == nil && ok && id == active
+func adminReference(admin types.TokenInput) string {
+	id := strconv.Itoa(admin.Id)
+	if admin.Type == types.RoleUser {
+		return "user-" + id
+	}
+	return id
+}
+
+func (g *GoogleSignIn) adminLinkAccount(r *http.Request, reference string) (types.TokenInput, bool) {
+	admin, ok := g.activeAdmin(r)
+	return admin, ok && adminReference(admin) == reference
 }
 
 func (g *GoogleSignIn) adminLinkStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	id, ok := g.activeAdminID(r)
+	admin, ok := g.activeAdmin(r)
 	if !ok {
 		utils.WriteJsonError(w, http.StatusUnauthorized, errors.New("admin session required"))
 		return
 	}
-	linked, err := g.accounts.GoogleAdminLinked(r.Context(), id, googleIssuer)
+	linked, err := g.accounts.GoogleAdminLinked(r.Context(), admin, googleIssuer)
 	if err != nil {
 		utils.WriteJsonError(w, http.StatusInternalServerError, errors.New("could not check Google connection"))
 		return

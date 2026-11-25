@@ -58,6 +58,14 @@ Use **Roles and access** to manage assignments and review changes. Before rollou
 
 For a release rollback, retain the added tables and access history. The previous API gives every admin staff access and allows admin registration. If that would restore revoked access or bypass the new registration gate, block the affected routes until a corrected release is ready. Use `down-one` on a disposable rehearsal database to verify reversibility.
 
+## Admin invitations and promotion
+
+Apply migration `20261126090000` before releasing the paired API and UI. Role Managers can invite an unused email or promote a selected account under **Roles and access**. Invited recipients sign in with a password or Google, then accept the 24-hour invitation. Sending another invitation to the same address replaces the link. Account owners use **Admin sign-in** after access is granted. Their account ID, credentials, and submissions stay with their original account.
+
+For email delivery, set `ADMIN_INVITE_RESEND_API_KEY` and `ADMIN_INVITE_FROM` in the Vercel environment. Use a verified Resend sender domain, and disable link tracking for invitation mail. Leave both variables unset to disable new invitation emails while keeping promotion available. The PostgreSQL test uses a captured mailer and requires a disposable migrated database in `PLACEMENT_TEST_DATABASE_URL`. [Resend email setup](https://resend.com/docs/introduction)
+
+For application rollback, retain the admin membership tables, pending invitations, and access history. Block `POST /api/v1/register-admin` when serving the previous API and confirm a legacy admin still holds Role Manager. Downgrading the schema discards invitation and admin membership state and is intended for disposable rehearsal databases.
+
 ## Vercel deployment
 
 The React UI and Go API are released to one Vercel project at one HTTPS origin. The repositories remain separate. The release workflow checks out a specific UI commit into `web/`, then sends both source trees to Vercel to build the UI and the Go Function in `api/index.go`. The original `go run ./cmd` server is still the local entry point. PostgreSQL remains on Neon.

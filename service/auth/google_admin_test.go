@@ -27,8 +27,8 @@ type googleAdminTestStore struct {
 	GoogleAccountStore
 }
 
-func (googleAdminTestStore) CheckGoogleAdminPassword(_ context.Context, id int, password string) error {
-	if id != 7 || password != "test-password" {
+func (googleAdminTestStore) CheckGoogleAdminPassword(_ context.Context, admin types.TokenInput, password string) error {
+	if admin.Id != 7 || password != "test-password" {
 		return ErrGoogleAdminPassword
 	}
 	return nil
@@ -84,7 +84,7 @@ func TestAdminGoogleCallbackRejectsTamperedFlowOrChangedAccount(t *testing.T) {
 		frontend: "https://app.example.com", sessions: googleAdminTestSessions{},
 		client: oauth2.Config{ClientSecret: "test-flow-key"},
 	}
-	valid := g.signedFlow("state", "verifier", "nonce", googleAdminLinkFlow, 7)
+	valid := g.signedFlow("state", "verifier", "nonce", googleAdminLinkFlow, "7")
 	t.Run("tampered flow", func(t *testing.T) {
 		tampered := strings.Replace(valid, ".admin-link.7.", ".admin-link.9.", 1)
 		if g.verifyFlow(tampered) != nil {
