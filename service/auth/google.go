@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -26,6 +28,7 @@ const (
 	googleUserFlow      = "user"
 	googleAdminFlow     = "admin"
 	googleAdminLinkFlow = "admin-link"
+	googleInviteFlow    = "admin-invite"
 )
 
 type GoogleIdentity struct {
@@ -40,10 +43,11 @@ var ErrGoogleAccountExists = errors.New("existing account requires linking")
 
 type GoogleAccountStore interface {
 	ResolveGoogleAccount(context.Context, GoogleIdentity) (types.TokenInput, error)
+	ResolveInvitedGoogleAccount(context.Context, GoogleIdentity, []byte) (types.TokenInput, error)
 	FindGoogleAdmin(context.Context, GoogleIdentity) (types.TokenInput, error)
-	CheckGoogleAdminPassword(context.Context, int, string) error
-	LinkGoogleAdmin(context.Context, int, GoogleIdentity) error
-	GoogleAdminLinked(context.Context, int, string) (bool, error)
+	CheckGoogleAdminPassword(context.Context, types.TokenInput, string) error
+	LinkGoogleAdmin(context.Context, types.TokenInput, GoogleIdentity) error
+	GoogleAdminLinked(context.Context, types.TokenInput, string) (bool, error)
 }
 
 type GoogleSignIn struct {
@@ -108,6 +112,7 @@ func (g *GoogleSignIn) RegisterRoutes(mux *http.ServeMux) {
 	if g != nil {
 		mux.HandleFunc("GET /api/v1/auth/google", g.start)
 		mux.HandleFunc("GET /api/v1/auth/google/admin", g.startAdmin)
+		mux.HandleFunc("GET /api/v1/auth/google/invitation", g.startInvitation)
 		mux.HandleFunc("POST /api/v1/auth/google/admin/link", g.startAdminLink)
 		mux.HandleFunc("GET /api/v1/auth/google/admin/link", g.adminLinkStatus)
 		mux.HandleFunc("GET /api/v1/auth/google/callback", g.callback)
@@ -126,15 +131,36 @@ func (g *GoogleSignIn) flowCookie(value string, maxAge int) *http.Cookie {
 }
 
 func (g *GoogleSignIn) start(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, g.begin(w, googleUserFlow, 0), http.StatusFound)
+	http.Redirect(w, r, g.begin(w, googleUserFlow, "0"), http.StatusFound)
 }
 
-func (g *GoogleSignIn) begin(w http.ResponseWriter, mode string, adminID int) string {
+func (g *GoogleSignIn) startInvitation(w http.ResponseWriter, r *http.Request) {
+	ref := g.invitationReference(r)
+	if ref == "" {
+		g.redirectError(w, r, googleInviteFlow, "google_failed")
+		return
+	}
+	http.Redirect(w, r, g.begin(w, googleInviteFlow, ref), http.StatusFound)
+}
+
+func (g *GoogleSignIn) invitationReference(r *http.Request) string {
+	cookie, err := r.Cookie(utils.AdminInvitationCookie(g.frontend, "", 0).Name)
+	if err != nil {
+		return ""
+	}
+	hash, err := access.InvitationHash(cookie.Value)
+	if err != nil {
+		return ""
+	}
+	return hex.EncodeToString(hash)
+}
+
+func (g *GoogleSignIn) begin(w http.ResponseWriter, mode, reference string) string {
 	state := oauth2.GenerateVerifier()
 	verifier := oauth2.GenerateVerifier()
 	nonce := oauth2.GenerateVerifier()
 	w.Header().Set("Cache-Control", "no-store")
-	http.SetCookie(w, g.flowCookie(g.signedFlow(state, verifier, nonce, mode, adminID), int(googleFlowLifetime.Seconds())))
+	http.SetCookie(w, g.flowCookie(g.signedFlow(state, verifier, nonce, mode, reference), int(googleFlowLifetime.Seconds())))
 	return g.client.AuthCodeURL(
 		state,
 		oauth2.S256ChallengeOption(verifier),
@@ -153,7 +179,7 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 	var params []string
 	if err == nil {
 		params = g.verifyFlow(cookie.Value)
-		if len(params) == 6 && (params[3] == googleAdminFlow || params[3] == googleAdminLinkFlow) {
+		if len(params) == 6 {
 			mode = params[3]
 		}
 	}
@@ -169,14 +195,18 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var adminID int
+	var admin types.TokenInput
 	if mode == googleAdminLinkFlow {
 		var ok bool
-		adminID, ok = g.adminLinkID(r, params[4])
+		admin, ok = g.adminLinkAccount(r, params[4])
 		if !ok {
 			g.redirectError(w, r, googleAdminFlow, "google_admin_session_expired")
 			return
 		}
+	}
+	if mode == googleInviteFlow && (params[4] == "" || params[4] != g.invitationReference(r)) {
+		g.redirectError(w, r, mode, "google_failed")
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
@@ -187,7 +217,7 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mode == googleAdminLinkFlow {
-		err = g.accounts.LinkGoogleAdmin(ctx, adminID, identity)
+		err = g.accounts.LinkGoogleAdmin(ctx, admin, identity)
 		switch {
 		case err == nil:
 			http.Redirect(w, r, g.frontend+"/admin?status=google_connected", http.StatusSeeOther)
@@ -203,14 +233,26 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var account types.TokenInput
-	if mode == googleAdminFlow {
+	switch mode {
+	case googleAdminFlow:
 		account, err = g.accounts.FindGoogleAdmin(ctx, identity)
 		if errors.Is(err, ErrGoogleAdminUnlinked) {
 			g.redirectError(w, r, mode, "google_admin_unlinked")
 			return
 		}
-	} else {
+	case googleInviteFlow:
+		hash, _ := hex.DecodeString(params[4])
+		account, err = g.accounts.ResolveInvitedGoogleAccount(ctx, identity, hash)
+	default:
 		account, err = g.accounts.ResolveGoogleAccount(ctx, identity)
+	}
+	if errors.Is(err, access.ErrInvitationRequired) {
+		g.redirectError(w, r, mode, "google_invitation_required")
+		return
+	}
+	if errors.Is(err, access.ErrInvitationAccount) || errors.Is(err, access.ErrInvalidInvitation) {
+		g.redirectError(w, r, mode, "google_invitation_mismatch")
+		return
 	}
 	if errors.Is(err, ErrGoogleAccountExists) {
 		g.redirectError(w, r, mode, "google_link_required")
@@ -236,7 +278,9 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 	g.sessionCookie(w, "ACCESS_TOKEN", access, time.Duration(config.Env.JWTExpirationTime)*time.Second)
 	g.sessionCookie(w, "REFRESH_TOKEN", refresh, 30*24*time.Hour)
 	destination := "/"
-	if account.Type == types.RoleAdmin {
+	if mode == googleInviteFlow {
+		destination = "/admin/invitation"
+	} else if account.IsAdmin() {
 		destination = "/admin"
 	}
 	http.Redirect(w, r, g.frontend+destination, http.StatusSeeOther)
@@ -294,6 +338,8 @@ func (g *GoogleSignIn) redirectError(w http.ResponseWriter, r *http.Request, mod
 		destination = "/admin/login"
 	case googleAdminLinkFlow:
 		destination = "/admin"
+	case googleInviteFlow:
+		destination = "/admin/invitation"
 	}
 	http.Redirect(w, r, g.frontend+destination+"?error="+url.QueryEscape(code), http.StatusSeeOther)
 }

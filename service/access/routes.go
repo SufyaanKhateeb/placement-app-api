@@ -19,10 +19,11 @@ import (
 type handler struct {
 	store  Store
 	origin string
+	mailer InvitationMailer
 }
 
-func (s Store) RegisterRoutes(mux *http.ServeMux, auth types.AuthService, origin string) {
-	h := handler{store: s, origin: origin}
+func (s Store) RegisterRoutes(mux *http.ServeMux, auth types.AuthService, origin string, mailer InvitationMailer) {
+	h := handler{store: s, origin: origin, mailer: mailer}
 	requireManager := middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, ManageRoles)
 	const path = "/api/v1/admin/access"
 	mux.Handle("GET "+path, requireManager(h.catalog))
@@ -35,6 +36,8 @@ func (s Store) RegisterRoutes(mux *http.ServeMux, auth types.AuthService, origin
 	mux.Handle("DELETE "+path+"/accounts/{kind}/{id}/roles/{role}", requireManager(h.write(h.assignment)))
 	mux.Handle("DELETE "+path+"/accounts/user/{id}/approvals/{submission}", requireManager(h.write(h.revokeApproval)))
 	mux.Handle("PUT "+path+"/legacy-approval-roles/{key}", requireManager(h.write(h.mapLegacyRole)))
+	mux.Handle("POST "+path+"/invitations", middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, InviteAdmins)(h.write(h.inviteAdmin)))
+	mux.Handle("POST "+path+"/accounts/user/{id}/promote", middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, PromoteAdmins)(h.write(h.promoteAdmin)))
 }
 
 func (h handler) catalog(w http.ResponseWriter, r *http.Request) {
@@ -206,7 +209,8 @@ func respond(w http.ResponseWriter, status int, value any, err error) {
 		utils.WriteJsonError(w, http.StatusNotFound, errors.New("account, role, or grant not found"))
 	case errors.Is(err, errDenied):
 		utils.WriteJsonError(w, http.StatusForbidden, err)
-	case errors.Is(err, errLastManager), errors.Is(err, errMappingExists):
+	case errors.Is(err, errLastManager), errors.Is(err, errMappingExists),
+		errors.Is(err, errEmailInUse), errors.Is(err, errAlreadyAdmin), errors.Is(err, errAccountChanged):
 		utils.WriteJsonError(w, http.StatusConflict, err)
 	case errors.Is(err, errInvalidRole), errors.Is(err, errReservedRole), errors.Is(err, errUnsafeApproval), errors.Is(err, errAdminRequired):
 		utils.WriteJsonError(w, http.StatusBadRequest, err)

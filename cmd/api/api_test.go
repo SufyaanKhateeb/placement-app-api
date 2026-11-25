@@ -9,7 +9,7 @@ import (
 
 func TestHTTPRouting(t *testing.T) {
 	const origin = "http://localhost:5173"
-	handler := newHandler(nil, origin, nil)
+	handler := newHandler(nil, origin, nil, nil)
 
 	t.Run("session APIs return JSON when signed out", func(t *testing.T) {
 		for _, route := range []struct{ method, path string }{

@@ -68,11 +68,15 @@ func Authenticate(auth types.AuthService, resolve ResolvePermissions, accountTyp
 				utils.WriteJsonError(w, http.StatusUnauthorized, errAuthenticationRequired)
 				return
 			}
-			if accountType != "" && role != accountType {
+			session := types.TokenInput{
+				Id: claims.Id, Type: role, TokenData: claims.TokenData,
+				AdminMode: claims.Type == types.RoleUser && claims.AdminMode,
+			}
+			if (accountType == types.RoleAdmin && !session.IsAdmin()) ||
+				(accountType == types.RoleUser && role != types.RoleUser) {
 				utils.WriteJsonError(w, http.StatusForbidden, errPermissionDenied)
 				return
 			}
-			session := types.TokenInput{Id: claims.Id, Type: role, TokenData: claims.TokenData}
 			permissions, err := resolve(r.Context(), session)
 			if errors.Is(err, pgx.ErrNoRows) {
 				utils.WriteJsonError(w, http.StatusUnauthorized, errAuthenticationRequired)
@@ -91,6 +95,7 @@ func Authenticate(auth types.AuthService, resolve ResolvePermissions, accountTyp
 			if refresh {
 				lifetime := time.Duration(config.Env.JWTExpirationTime) * time.Second
 				claims.Type = role
+				claims.AdminMode = session.AdminMode
 				access, err := auth.SignJwt(lifetime, *claims)
 				if err != nil {
 					utils.WriteJsonError(w, http.StatusInternalServerError, errors.New("could not refresh session"))

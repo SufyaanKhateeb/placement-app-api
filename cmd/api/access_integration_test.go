@@ -88,7 +88,7 @@ func TestRoleManagementPostgres(t *testing.T) {
 	}
 
 	const origin = "http://localhost:5173"
-	handler := newHandler(pool, origin, nil)
+	handler := newHandler(pool, origin, nil, nil)
 	request := func(method, path, body string, cookie *http.Cookie, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(body)).WithContext(ctx)
@@ -127,8 +127,9 @@ func TestRoleManagementPostgres(t *testing.T) {
 	request(http.MethodGet, accessPath, "", manager, http.StatusOK)
 	request(http.MethodGet, accessPath, "", ordinary, http.StatusForbidden)
 	request(http.MethodGet, accessPath, "", member, http.StatusForbidden)
-	request(http.MethodPost, "/register-admin", "{}", manager, http.StatusBadRequest)
-	request(http.MethodPost, "/register-admin", "{}", ordinary, http.StatusForbidden)
+	request(http.MethodPost, "/register-admin", "{}", manager, http.StatusGone)
+	request(http.MethodPost, "/admin/access/invitations", "{}", manager, http.StatusBadRequest)
+	request(http.MethodPost, "/admin/access/invitations", "{}", ordinary, http.StatusForbidden)
 	for _, session := range []struct {
 		cookie     *http.Cookie
 		canPromote bool

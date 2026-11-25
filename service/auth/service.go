@@ -41,7 +41,8 @@ func (a *AuthService) CreateTokens(tokenInput *types.TokenInput) (string, string
 	expirationTime := time.Second * time.Duration(config.Env.JWTExpirationTime)
 
 	claims := &types.CustomClaims{
-		Id: tokenInput.Id,
+		Id:        tokenInput.Id,
+		AdminMode: tokenInput.Type == types.RoleUser && tokenInput.AdminMode,
 	}
 
 	if len(tokenInput.Type) != 0 {

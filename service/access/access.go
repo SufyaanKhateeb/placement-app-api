@@ -43,6 +43,9 @@ func resolvePermissions(ctx context.Context, db rowReader, account types.TokenIn
 				SELECT role_id FROM access_assignments
 				WHERE account_type = a.account_type AND account_id = a.account_id
 				UNION ALL
+				SELECT role_id FROM admin_membership_roles
+				WHERE $3 AND a.account_type = 'user' AND user_id = a.account_id
+				UNION ALL
 				SELECT r.id
 				FROM form_submissions sub
 				JOIN form_verifications v ON v.submission_id = sub.id
@@ -54,7 +57,8 @@ func resolvePermissions(ctx context.Context, db rowReader, account types.TokenIn
 			JOIN access_role_permissions rp ON rp.role_id = granted.role_id
 			ORDER BY rp.permission_key
 		) FROM access_accounts a WHERE a.account_type = $1 AND a.account_id = $2
-	`, account.Type, account.Id).Scan(&permissions)
+		  AND (NOT $3 OR EXISTS (SELECT 1 FROM admin_memberships WHERE user_id = a.user_id))
+	`, account.Type, account.Id, account.Type == types.RoleUser && account.AdminMode).Scan(&permissions)
 	return permissions, err
 }
 

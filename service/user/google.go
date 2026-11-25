@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/jackc/pgx/v5"
@@ -18,8 +19,8 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 	defer tx.Rollback(ctx)
 
 	// Coordinate simultaneous callbacks for the same verified email.
-	email := strings.ToLower(identity.Email)
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", email); err != nil {
+	email, err := access.LockAccountEmail(ctx, tx, identity.Email)
+	if err != nil {
 		return types.TokenInput{}, err
 	}
 
@@ -33,6 +34,9 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 		return account, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
+		return types.TokenInput{}, err
+	}
+	if err := access.CheckSignupAddress(ctx, tx, email); err != nil {
 		return types.TokenInput{}, err
 	}
 
@@ -55,6 +59,54 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO oidc_identity (issuer, subject, user_id) VALUES ($1, $2, $3)
 	`, identity.Issuer, identity.Subject, account.Id); err != nil {
+		return types.TokenInput{}, err
+	}
+	return account, tx.Commit(ctx)
+}
+
+func (s *Store) ResolveInvitedGoogleAccount(ctx context.Context, identity auth.GoogleIdentity, hash []byte) (types.TokenInput, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return types.TokenInput{}, err
+	}
+	defer tx.Rollback(ctx)
+	invite, err := access.LockInvitationForEnrollment(ctx, tx, hash)
+	if err != nil {
+		return types.TokenInput{}, err
+	}
+	if !strings.EqualFold(invite.Email, identity.Email) {
+		return types.TokenInput{}, access.ErrInvitationAccount
+	}
+
+	account := types.TokenInput{Type: types.RoleUser}
+	if invite.UserID != nil {
+		err := tx.QueryRow(ctx, `
+			SELECT user_id FROM oidc_identity WHERE issuer = $1 AND subject = $2 AND user_id = $3
+		`, identity.Issuer, identity.Subject, *invite.UserID).Scan(&account.Id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return types.TokenInput{}, access.ErrInvitationAccount
+		}
+		if err != nil {
+			return types.TokenInput{}, err
+		}
+		return account, tx.Commit(ctx)
+	}
+
+	account.Id, err = createInvitedAccount(ctx, tx, invite.Email, identity.FirstName, identity.LastName, "")
+	if err != nil {
+		return types.TokenInput{}, err
+	}
+	result, err := tx.Exec(ctx, `
+		INSERT INTO oidc_identity (issuer, subject, user_id) VALUES ($1, $2, $3)
+		ON CONFLICT (issuer, subject) DO NOTHING
+	`, identity.Issuer, identity.Subject, account.Id)
+	if err != nil {
+		return types.TokenInput{}, err
+	}
+	if result.RowsAffected() == 0 {
+		return types.TokenInput{}, access.ErrInvitationAccount
+	}
+	if err := access.BindInvitationAccount(ctx, tx, hash, account.Id); err != nil {
 		return types.TokenInput{}, err
 	}
 	return account, tx.Commit(ctx)

@@ -9,9 +9,9 @@ import (
 	"time"
 )
 
-func (g *GoogleSignIn) signedFlow(state, verifier, nonce, mode string, adminID int) string {
+func (g *GoogleSignIn) signedFlow(state, verifier, nonce, mode, reference string) string {
 	expires := strconv.FormatInt(time.Now().Add(googleFlowLifetime).Unix(), 10)
-	data := strings.Join([]string{state, verifier, nonce, mode, strconv.Itoa(adminID), expires}, ".")
+	data := strings.Join([]string{state, verifier, nonce, mode, reference, expires}, ".")
 	return data + "." + base64.RawURLEncoding.EncodeToString(g.flowMAC(data))
 }
 

@@ -9,7 +9,6 @@ import (
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
-	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 )
@@ -17,6 +16,7 @@ import (
 type Handler struct {
 	UserService types.UserService
 	AuthService types.AuthService
+	Store       *Store
 }
 
 func NewHandler(users types.UserService, auth types.AuthService) *Handler {
@@ -26,17 +26,15 @@ func NewHandler(users types.UserService, auth types.AuthService) *Handler {
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string, resolve middlewares.ResolvePermissions, frontendOrigin string) {
 	mux.HandleFunc("POST "+prefix+"/login", h.login(types.RoleUser))
 	mux.HandleFunc("POST "+prefix+"/login-admin", h.login(types.RoleAdmin))
-	mux.HandleFunc("POST "+prefix+"/register", h.register(types.RoleUser))
+	mux.HandleFunc("POST "+prefix+"/register", h.register)
 
 	authenticate := middlewares.Authenticate(h.AuthService, resolve, "")
-	canInvite := middlewares.Authenticate(h.AuthService, resolve, types.RoleAdmin, access.InviteAdmins)
-	mux.Handle("POST "+prefix+"/register-admin", canInvite(func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && origin != frontendOrigin {
-			utils.WriteJsonError(w, http.StatusForbidden, errors.New("untrusted request origin"))
-			return
-		}
-		h.register(types.RoleAdmin)(w, r)
-	}))
+	mux.HandleFunc("POST "+prefix+"/register-admin", func(w http.ResponseWriter, _ *http.Request) {
+		utils.WriteJsonError(w, http.StatusGone, errors.New("use an admin invitation or promote an existing account"))
+	})
+	if h.Store != nil {
+		h.registerInvitationRoutes(mux, prefix, authenticate, frontendOrigin)
+	}
 	mux.Handle("POST "+prefix+"/refresh", authenticate(h.profile))
 	mux.Handle("POST "+prefix+"/logout", authenticate(h.logout))
 	mux.Handle("GET "+prefix+"/user", authenticate(h.profile))
@@ -49,8 +47,13 @@ func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile := types.UserDto{Role: session.Type, UType: session.Type, Permissions: middlewares.Permissions(r.Context())}
-	if session.Type == types.RoleUser {
+	profile := types.UserDto{
+		Role: session.Type, UType: session.Type, AccountType: session.Type,
+		Permissions: middlewares.Permissions(r.Context()),
+	}
+	if session.IsAdmin() {
+		profile.Role, profile.UType = types.RoleAdmin, types.RoleAdmin
+	} else {
 		profile.UType = types.LegacyRoleStudent
 	}
 	if session.Type == types.RoleAdmin {
@@ -90,11 +93,25 @@ func (h *Handler) login(role string) http.HandlerFunc {
 		}
 		if role == types.RoleAdmin {
 			user, err := h.UserService.LoginAdminUser(r.Context(), &payload)
-			if err != nil {
-				utils.WriteJsonError(w, err.StatusCode, err.Err)
+			if err == nil {
+				h.startSession(w, http.StatusOK, types.TokenInput{Id: user.Id, Type: types.RoleAdmin})
 				return
 			}
-			h.startSession(w, http.StatusOK, role, user.Id)
+			if h.Store != nil {
+				member, memberErr := h.UserService.LoginUser(r.Context(), &payload)
+				if memberErr == nil {
+					isAdmin, lookupErr := h.Store.IsPromotedAdmin(r.Context(), member.Id)
+					if lookupErr != nil {
+						utils.WriteJsonError(w, http.StatusInternalServerError, errors.New("could not sign in"))
+						return
+					}
+					if isAdmin {
+						h.startSession(w, http.StatusOK, types.TokenInput{Id: member.Id, Type: types.RoleUser, AdminMode: true})
+						return
+					}
+				}
+			}
+			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
 		}
 		user, err := h.UserService.LoginUser(r.Context(), &payload)
@@ -102,7 +119,7 @@ func (h *Handler) login(role string) http.HandlerFunc {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
 		}
-		h.startSession(w, http.StatusOK, role, user.Id)
+		h.startSession(w, http.StatusOK, types.TokenInput{Id: user.Id, Type: types.RoleUser})
 	}
 }
 
@@ -110,38 +127,31 @@ var passwordLetter = regexp.MustCompile("[a-zA-Z]")
 var passwordDigit = regexp.MustCompile("[0-9]")
 var passwordSpecial = regexp.MustCompile(`[!@#$%^&*(),.?":{}|<>]`)
 
-func (h *Handler) register(role string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var payload types.RegisterUserPayload
-		if !readPayload(w, r, &payload) {
-			return
-		}
-		if payload.FirstName == "" || payload.LastName == "" || !validEmail(payload.Email) {
-			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("first name, last name, and a valid email are required"))
-			return
-		}
-		password := payload.Password
-		if len([]rune(password)) < 8 || len(password) > 72 || !passwordLetter.MatchString(password) ||
-			!passwordDigit.MatchString(password) || !passwordSpecial.MatchString(password) {
-			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("password must have at least 8 characters, at most 72 bytes, and include a letter, digit, and special character"))
-			return
-		}
-		if role == types.RoleAdmin {
-			user, err := h.UserService.RegisterAdminUser(r.Context(), &payload)
-			if err != nil {
-				utils.WriteJsonError(w, err.StatusCode, err.Err)
-				return
-			}
-			h.startSession(w, http.StatusCreated, role, user.Id)
-			return
-		}
-		user, err := h.UserService.RegisterUser(r.Context(), &payload)
-		if err != nil {
-			utils.WriteJsonError(w, err.StatusCode, err.Err)
-			return
-		}
-		h.startSession(w, http.StatusCreated, role, user.Id)
+func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
+	var payload types.RegisterUserPayload
+	if !readPayload(w, r, &payload) || !validRegistration(w, payload) {
+		return
 	}
+	user, err := h.UserService.RegisterUser(r.Context(), &payload)
+	if err != nil {
+		utils.WriteJsonError(w, err.StatusCode, err.Err)
+		return
+	}
+	h.startSession(w, http.StatusCreated, types.TokenInput{Id: user.Id, Type: types.RoleUser})
+}
+
+func validRegistration(w http.ResponseWriter, payload types.RegisterUserPayload) bool {
+	if payload.FirstName == "" || payload.LastName == "" || !validEmail(payload.Email) {
+		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("first name, last name, and a valid email are required"))
+		return false
+	}
+	password := payload.Password
+	if len([]rune(password)) < 8 || len(password) > 72 || !passwordLetter.MatchString(password) ||
+		!passwordDigit.MatchString(password) || !passwordSpecial.MatchString(password) {
+		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("password must have at least 8 characters, at most 72 bytes, and include a letter, digit, and special character"))
+		return false
+	}
+	return true
 }
 
 func validEmail(email string) bool {
@@ -158,8 +168,8 @@ func readPayload(w http.ResponseWriter, r *http.Request, payload any) bool {
 	return true
 }
 
-func (h *Handler) startSession(w http.ResponseWriter, status int, role string, id int) {
-	access, refresh, err := h.AuthService.CreateTokens(&types.TokenInput{Id: id, Type: role})
+func (h *Handler) startSession(w http.ResponseWriter, status int, account types.TokenInput) {
+	access, refresh, err := h.AuthService.CreateTokens(&account)
 	if err != nil {
 		utils.WriteJsonError(w, http.StatusInternalServerError, errors.New("could not start session"))
 		return

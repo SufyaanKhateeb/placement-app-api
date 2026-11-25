@@ -38,13 +38,14 @@ func TestRegularSessionCannotUseAdminRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := newHandler(nil, origin, google)
+	handler := newHandler(nil, origin, google, nil)
 	for _, tc := range []struct {
 		name, method, path, cookieName, token string
 		status                                int
 	}{
-		{"register admin with access token", http.MethodPost, "/register-admin", "ACCESS_TOKEN", access, http.StatusForbidden},
-		{"register admin with refresh token", http.MethodPost, "/register-admin", "REFRESH_TOKEN", refresh, http.StatusForbidden},
+		{"retired admin registration", http.MethodPost, "/register-admin", "ACCESS_TOKEN", access, http.StatusGone},
+		{"invite with access token", http.MethodPost, "/admin/access/invitations", "ACCESS_TOKEN", access, http.StatusForbidden},
+		{"promote with refresh token", http.MethodPost, "/admin/access/accounts/user/7/promote", "REFRESH_TOKEN", refresh, http.StatusForbidden},
 		{"read Google admin link", http.MethodGet, "/auth/google/admin/link", "ACCESS_TOKEN", access, http.StatusUnauthorized},
 		{"start Google admin link", http.MethodPost, "/auth/google/admin/link", "ACCESS_TOKEN", access, http.StatusUnauthorized},
 	} {
