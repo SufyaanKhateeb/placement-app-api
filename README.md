@@ -62,7 +62,15 @@ For a release rollback, retain the added tables and access history. The previous
 
 Apply migration `20261126090000` before releasing the paired API and UI. Role Managers can invite an unused email or promote a selected account under **Roles and access**. Invited recipients sign in with a password or Google, then accept the 24-hour invitation. Sending another invitation to the same address replaces the link. Account owners use **Admin sign-in** after access is granted. Their account ID, credentials, and submissions stay with their original account.
 
-For email delivery, set `ADMIN_INVITE_RESEND_API_KEY` and `ADMIN_INVITE_FROM` in the Vercel environment. Use a verified Resend sender domain, and disable link tracking for invitation mail. Leave both variables unset to disable new invitation emails while keeping promotion available. The PostgreSQL test uses a captured mailer and requires a disposable migrated database in `PLACEMENT_TEST_DATABASE_URL`. [Resend email setup](https://resend.com/docs/introduction)
+The Go API builds the invitation email and sends it through the Gmail API as a dedicated Gmail or Google Workspace account.
+
+1. Enable the Gmail API in Google Cloud and create a separate OAuth web application client for invitation mail. Use the internal OAuth audience if the sender and project belong to the same Google Workspace organization. Google issues seven-day refresh tokens to external OAuth apps in Testing for the Gmail send scope. [Google OAuth token expiration](https://developers.google.com/identity/protocols/oauth2#expiration)
+2. Register `https://developers.google.com/oauthplayground` as a redirect URI for that client. In the Playground, select **Use your own OAuth credentials** and **Offline** access. Authorize only `https://www.googleapis.com/auth/gmail.send` while signed in as the sender, then exchange the authorization code for a refresh token. [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground/) · [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
+3. Set `ADMIN_INVITE_GMAIL_CLIENT_ID`, `ADMIN_INVITE_GMAIL_CLIENT_SECRET`, and `ADMIN_INVITE_GMAIL_REFRESH_TOKEN` in the Vercel environment. Set `ADMIN_INVITE_FROM` to the authorized mailbox address, with an optional display name such as `Placement App <invitations@example.com>`. For local development use the API's ignored environment file.
+
+Leave the Gmail OAuth settings unset to disable new invitation emails while keeping promotion available. Google sign-in uses the separate `GOOGLE_OIDC_*` settings.
+
+The Gmail transport test uses local OAuth and Gmail API endpoints. The PostgreSQL invitation test uses a captured mailer and requires a disposable migrated database in `PLACEMENT_TEST_DATABASE_URL`.
 
 For application rollback, retain the admin membership tables, pending invitations, and access history. Block `POST /api/v1/register-admin` when serving the previous API and confirm a legacy admin still holds Role Manager. Downgrading the schema discards invitation and admin membership state and is intended for disposable rehearsal databases.
 
