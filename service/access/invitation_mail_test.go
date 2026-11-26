@@ -3,129 +3,162 @@ package access
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"math/big"
 	"mime/quotedprintable"
-	"net/http"
-	"net/http/httptest"
 	"net/mail"
+	"net/textproto"
 	"strings"
-	"sync/atomic"
 	"testing"
-
-	"golang.org/x/oauth2"
+	"time"
 )
 
 func TestGmailInvitationMailer(t *testing.T) {
 	const (
-		fromAddress = "invitations@example.invalid"
+		sender      = "invitations@example.invalid"
 		recipient   = "invitee@example.invalid"
+		appPassword = "fixturemailpassw"
 		link        = "https://placement.example.invalid/admin/invitation#fixture-token"
-		sendPath    = "/gmail/v1/users/me/messages/send"
 	)
-	var tokenRequests, sendRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/token":
-			tokenRequests.Add(1)
-			if err := r.ParseForm(); err != nil || r.Method != http.MethodPost ||
-				r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "test-refresh" ||
-				r.Form.Get("client_id") != "test-client" || r.Form.Get("client_secret") != "test-secret" {
-				t.Error("unexpected OAuth refresh request")
-				http.Error(w, "invalid OAuth fixture request", http.StatusBadRequest)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `{"access_token":"test-access","token_type":"Bearer","expires_in":3600}`)
-		case sendPath:
-			attempt := sendRequests.Add(1)
-			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer test-access" ||
-				r.Header.Get("Content-Type") != "application/json" {
-				t.Error("unexpected Gmail request headers")
-			}
-			var payload struct {
-				Raw string `json:"raw"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Errorf("decode Gmail payload: %v", err)
-				http.Error(w, "invalid fixture message", http.StatusBadRequest)
-				return
-			}
-			raw, err := base64.RawURLEncoding.Strict().DecodeString(payload.Raw)
+	serverTLS, clientTLS := smtpFixtureTLS(t)
+	for _, test := range []struct {
+		name  string
+		reply string
+	}{
+		{"accepted", "250 message accepted"},
+		{"rejected", "554 message rejected"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
 			if err != nil {
-				t.Errorf("decode Gmail message: %v", err)
-				http.Error(w, "invalid fixture encoding", http.StatusBadRequest)
-				return
+				t.Fatal(err)
 			}
-			message, err := mail.ReadMessage(bytes.NewReader(raw))
-			if err != nil {
-				t.Errorf("parse invitation email: %v", err)
-				http.Error(w, "invalid fixture message", http.StatusBadRequest)
-				return
-			}
-			from, fromErr := message.Header.AddressList("From")
-			to, toErr := message.Header.AddressList("To")
-			if fromErr != nil || len(from) != 1 || from[0].Address != fromAddress ||
-				toErr != nil || len(to) != 1 || to[0].Address != recipient ||
-				message.Header.Get("Subject") != "Your Placement App admin invitation" {
-				t.Error("incorrect invitation sender, recipient, or subject")
-			}
-			text, err := io.ReadAll(quotedprintable.NewReader(message.Body))
-			if err != nil || !strings.Contains(string(text), link) || !strings.Contains(string(text), "24 hours") {
-				t.Error("invitation body omitted the link or expiry")
-			}
-			switch attempt {
-			case 2:
-				http.Error(w, "private upstream details", http.StatusForbidden)
-			case 3:
-				http.Redirect(w, r, "/unexpected", http.StatusTemporaryRedirect)
-			default:
-				w.Header().Set("Content-Type", "application/json")
-				io.WriteString(w, `{"id":"fixture-message"}`)
-			}
-		default:
-			t.Errorf("unexpected OAuth or Gmail path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
+			defer server.Close()
+			result := make(chan error, 1)
+			go func() {
+				conn, err := server.Accept()
+				if err != nil {
+					result <- err
+					return
+				}
+				defer conn.Close()
+				if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+					result <- err
+					return
+				}
+				smtp := textproto.NewConn(conn)
+				auth := base64.StdEncoding.EncodeToString([]byte("\x00" + sender + "\x00" + appPassword))
+				if err := smtp.PrintfLine("220 fixture ready"); err != nil {
+					result <- err
+					return
+				}
+				for _, step := range []struct{ command, reply string }{
+					{"EHLO localhost", "250-fixture\r\n250 AUTH PLAIN"},
+					{"AUTH PLAIN " + auth, "235 authenticated"},
+					{"MAIL FROM:<" + sender + ">", "250 sender accepted"},
+					{"RCPT TO:<" + recipient + ">", "250 recipient accepted"},
+					{"DATA", "354 send message"},
+				} {
+					line, err := smtp.ReadLine()
+					if err != nil || line != step.command {
+						result <- fmt.Errorf("expected SMTP command %q (read error: %v)", strings.Fields(step.command)[0], err)
+						return
+					}
+					if err := smtp.PrintfLine("%s", step.reply); err != nil {
+						result <- err
+						return
+					}
+				}
+				raw, err := smtp.ReadDotBytes()
+				if err != nil {
+					result <- err
+					return
+				}
+				message, err := mail.ReadMessage(bytes.NewReader(raw))
+				if err != nil {
+					result <- err
+					return
+				}
+				from, fromErr := message.Header.AddressList("From")
+				to, toErr := message.Header.AddressList("To")
+				if fromErr != nil || len(from) != 1 || from[0].Address != sender ||
+					toErr != nil || len(to) != 1 || to[0].Address != recipient ||
+					message.Header.Get("Subject") != "Your Placement App admin invitation" {
+					result <- errors.New("unexpected invitation headers")
+					return
+				}
+				body, err := io.ReadAll(quotedprintable.NewReader(message.Body))
+				if err != nil || !strings.Contains(string(body), link) || !strings.Contains(string(body), "24 hours") {
+					result <- errors.New("invitation body omitted the link or expiry")
+					return
+				}
+				result <- smtp.PrintfLine("%s", test.reply)
+			}()
 
-	config := oauth2.Config{
-		ClientID: "test-client", ClientSecret: "test-secret",
-		Endpoint: oauth2.Endpoint{TokenURL: server.URL + "/token", AuthStyle: oauth2.AuthStyleInParams},
-	}
-	mailer := gmailInvitationMailer(config, "test-refresh", &mail.Address{Name: "Placement App", Address: fromAddress}, server.URL+sendPath)
-	if err := mailer(context.Background(), recipient, link); err != nil {
-		t.Fatalf("send invitation: %v", err)
-	}
-	if err := mailer(context.Background(), recipient, link); err == nil ||
-		!strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "private upstream details") {
-		t.Fatalf("expected a sanitized Gmail rejection, got %v", err)
-	}
-	if err := mailer(context.Background(), recipient, link); err == nil || !strings.Contains(err.Error(), "307") {
-		t.Fatalf("expected a stopped redirect, got %v", err)
-	}
-	if tokenRequests.Load() != 1 || sendRequests.Load() != 3 {
-		t.Fatalf("expected one token refresh and three send attempts, got %d and %d", tokenRequests.Load(), sendRequests.Load())
+			mailer := gmailInvitationMailer(server.Addr().String(), clientTLS, sender, appPassword)
+			err = mailer(context.Background(), recipient, link)
+			_ = server.Close()
+			if fixtureErr := <-result; fixtureErr != nil {
+				t.Fatalf("SMTP fixture: %v", fixtureErr)
+			}
+			if test.name == "accepted" && err != nil {
+				t.Fatalf("send invitation: %v", err)
+			}
+			if test.name == "rejected" {
+				var reply *textproto.Error
+				if !errors.As(err, &reply) || reply.Code != 554 {
+					t.Fatalf("expected SMTP rejection, got %v", err)
+				}
+			}
+		})
 	}
 }
 
-func TestInvitationMailerConfiguration(t *testing.T) {
-	for _, key := range []string{"ADMIN_INVITE_GMAIL_CLIENT_ID", "ADMIN_INVITE_GMAIL_CLIENT_SECRET", "ADMIN_INVITE_GMAIL_REFRESH_TOKEN"} {
-		t.Setenv(key, "")
+func smtpFixtureTLS(t *testing.T) (*tls.Config, *tls.Config) {
+	t.Helper()
+	const host = "smtp.example.invalid"
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Setenv("ADMIN_INVITE_FROM", "Placement App <invitations@example.invalid>")
-	mailer, err := ReadInvitationMailer()
-	if mailer != nil || err != nil {
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), DNSNames: []string{host},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	cert, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := x509.ParseCertificate(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	server := &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{cert}, PrivateKey: privateKey}}}
+	client := &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12}
+	return server, client
+}
+
+func TestInvitationMailerConfiguration(t *testing.T) {
+	t.Setenv("ADMIN_INVITE_GMAIL_EMAIL", "")
+	t.Setenv("ADMIN_INVITE_GMAIL_APP_PASSWORD", "")
+	if mailer, err := ReadInvitationMailer(); mailer != nil || err != nil {
 		t.Fatalf("expected mail delivery disabled with no Gmail settings, got %v", err)
 	}
-	t.Setenv("ADMIN_INVITE_GMAIL_CLIENT_ID", "fixture-client")
+	t.Setenv("ADMIN_INVITE_GMAIL_EMAIL", "invitations@example.invalid")
 	if mailer, err := ReadInvitationMailer(); mailer != nil || err == nil {
 		t.Fatal("expected an error for incomplete Gmail settings")
 	}
-	t.Setenv("ADMIN_INVITE_GMAIL_CLIENT_SECRET", "fixture-secret")
-	t.Setenv("ADMIN_INVITE_GMAIL_REFRESH_TOKEN", "fixture-refresh")
+	t.Setenv("ADMIN_INVITE_GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
 	if mailer, err := ReadInvitationMailer(); mailer == nil || err != nil {
 		t.Fatalf("expected a configured Gmail sender, got %v", err)
 	}

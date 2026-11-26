@@ -1,86 +1,80 @@
 package access
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
+	"crypto/tls"
 	"errors"
-	"fmt"
+	"io"
 	"mime/quotedprintable"
-	"net/http"
 	"net/mail"
+	"net/smtp"
 	"os"
 	"strings"
 	"time"
-
-	"golang.org/x/oauth2"
 )
 
-const gmailSendURL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
-const invitationMailTimeout = 8 * time.Second
+const (
+	gmailSMTPHost         = "smtp.gmail.com"
+	gmailSMTPAddress      = gmailSMTPHost + ":465"
+	invitationMailTimeout = 8 * time.Second
+)
 
 func ReadInvitationMailer() (InvitationMailer, error) {
-	clientID := strings.TrimSpace(os.Getenv("ADMIN_INVITE_GMAIL_CLIENT_ID"))
-	clientSecret := strings.TrimSpace(os.Getenv("ADMIN_INVITE_GMAIL_CLIENT_SECRET"))
-	refreshToken := strings.TrimSpace(os.Getenv("ADMIN_INVITE_GMAIL_REFRESH_TOKEN"))
-	if clientID == "" && clientSecret == "" && refreshToken == "" {
+	email := strings.TrimSpace(os.Getenv("ADMIN_INVITE_GMAIL_EMAIL"))
+	appPassword := strings.ReplaceAll(strings.TrimSpace(os.Getenv("ADMIN_INVITE_GMAIL_APP_PASSWORD")), " ", "")
+	if email == "" && appPassword == "" {
 		return nil, nil
 	}
-	if clientID == "" || clientSecret == "" || refreshToken == "" {
-		return nil, errors.New("set ADMIN_INVITE_GMAIL_CLIENT_ID, ADMIN_INVITE_GMAIL_CLIENT_SECRET, and ADMIN_INVITE_GMAIL_REFRESH_TOKEN together")
+	if !ValidInvitationEmail(email) || len(appPassword) != 16 || strings.ContainsAny(appPassword, "\r\n\t") {
+		return nil, errors.New("set ADMIN_INVITE_GMAIL_EMAIL to the sender address and ADMIN_INVITE_GMAIL_APP_PASSWORD to its 16-character Google App Password")
 	}
-	fromValue := strings.TrimSpace(os.Getenv("ADMIN_INVITE_FROM"))
-	from, err := mail.ParseAddress(fromValue)
-	if err != nil || strings.ContainsAny(fromValue, "\r\n") {
-		return nil, errors.New("ADMIN_INVITE_FROM must contain a valid sender address")
-	}
-	config := oauth2.Config{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Endpoint: oauth2.Endpoint{
-			TokenURL:  "https://oauth2.googleapis.com/token",
-			AuthStyle: oauth2.AuthStyleInParams,
-		},
-	}
-	return gmailInvitationMailer(config, refreshToken, from, gmailSendURL), nil
+	config := &tls.Config{ServerName: gmailSMTPHost, MinVersion: tls.VersionTLS12}
+	return gmailInvitationMailer(gmailSMTPAddress, config, email, appPassword), nil
 }
 
-func gmailInvitationMailer(config oauth2.Config, refreshToken string, from *mail.Address, sendURL string) InvitationMailer {
-	baseClient := &http.Client{
-		Timeout:       invitationMailTimeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	// A warm API instance can reuse the mailbox access token across requests.
-	oauthContext := context.WithValue(context.Background(), oauth2.HTTPClient, baseClient)
-	client := config.Client(oauthContext, &oauth2.Token{RefreshToken: refreshToken})
+func gmailInvitationMailer(address string, config *tls.Config, sender, appPassword string) InvitationMailer {
+	dialer := &tls.Dialer{Config: config}
+	auth := smtp.PlainAuth("", sender, appPassword, config.ServerName)
+	from := &mail.Address{Name: "Placement App", Address: sender}
 	return func(ctx context.Context, email, link string) error {
 		if !ValidInvitationEmail(email) {
 			return errors.New("invalid invitation recipient")
 		}
-		message := invitationMessage(from, email, link)
-		body, err := json.Marshal(struct {
-			Raw string `json:"raw"`
-		}{Raw: base64.RawURLEncoding.EncodeToString([]byte(message))})
-		if err != nil {
-			return err
-		}
 		ctx, cancel := context.WithTimeout(ctx, invitationMailTimeout)
 		defer cancel()
-		request, err := http.NewRequestWithContext(ctx, http.MethodPost, sendURL, bytes.NewReader(body))
+		connection, err := dialer.DialContext(ctx, "tcp", address)
 		if err != nil {
 			return err
 		}
-		request.Header.Set("Content-Type", "application/json")
-		response, err := client.Do(request)
+		defer connection.Close()
+		deadline, _ := ctx.Deadline()
+		if err := connection.SetDeadline(deadline); err != nil {
+			return err
+		}
+		stop := context.AfterFunc(ctx, func() { _ = connection.Close() })
+		defer stop()
+		client, err := smtp.NewClient(connection, config.ServerName)
 		if err != nil {
 			return err
 		}
-		defer response.Body.Close()
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			return fmt.Errorf("Gmail rejected the invitation email (HTTP %d)", response.StatusCode)
+		if err := client.Auth(auth); err != nil {
+			return err
 		}
-		return nil
+		if err := client.Mail(sender); err != nil {
+			return err
+		}
+		if err := client.Rcpt(email); err != nil {
+			return err
+		}
+		data, err := client.Data()
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(data, invitationMessage(from, email, link)); err != nil {
+			return err
+		}
+		// Closing DATA waits for Gmail's final acceptance of the message.
+		return data.Close()
 	}
 }
 
