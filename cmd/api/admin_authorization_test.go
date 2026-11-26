@@ -38,7 +38,7 @@ func TestRegularSessionCannotUseAdminRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := newHandler(nil, origin, google, nil)
+	handler := newHandler(nil, origin, google, nil, nil)
 	for _, tc := range []struct {
 		name, method, path, cookieName, token string
 		status                                int

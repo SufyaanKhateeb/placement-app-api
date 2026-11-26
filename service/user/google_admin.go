@@ -55,15 +55,22 @@ func (s *Store) LinkGoogleAdmin(ctx context.Context, admin types.TokenInput, ide
 		return auth.ErrGoogleAdminEmailMismatch
 	}
 
+	if err := linkGoogleIdentity(ctx, tx, admin, identity); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func linkGoogleIdentity(ctx context.Context, tx pgx.Tx, account types.TokenInput, identity auth.GoogleIdentity) error {
 	var linkedSubject string
-	column := adminIdentityColumn(admin)
-	err = tx.QueryRow(ctx, "SELECT subject FROM oidc_identity WHERE issuer = $1 AND "+column+" = $2",
-		identity.Issuer, admin.Id).Scan(&linkedSubject)
+	column := googleIdentityColumn(account)
+	err := tx.QueryRow(ctx, "SELECT subject FROM oidc_identity WHERE issuer = $1 AND "+column+" = $2",
+		identity.Issuer, account.Id).Scan(&linkedSubject)
 	if err == nil {
 		if linkedSubject != identity.Subject {
 			return auth.ErrGoogleAdminLinkConflict
 		}
-		return tx.Commit(ctx)
+		return nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -72,20 +79,20 @@ func (s *Store) LinkGoogleAdmin(ctx context.Context, admin types.TokenInput, ide
 	result, err := tx.Exec(ctx, `
 		INSERT INTO oidc_identity (issuer, subject, `+column+`) VALUES ($1, $2, $3)
 		ON CONFLICT (issuer, subject) DO NOTHING
-	`, identity.Issuer, identity.Subject, admin.Id)
+	`, identity.Issuer, identity.Subject, account.Id)
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() == 0 {
 		return auth.ErrGoogleAdminLinkConflict
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *Store) GoogleAdminLinked(ctx context.Context, admin types.TokenInput, issuer string) (bool, error) {
 	var linked bool
 	err := s.db.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM oidc_identity WHERE `+adminIdentityColumn(admin)+` = a.id AND issuer = $2)
+		SELECT EXISTS (SELECT 1 FROM oidc_identity WHERE `+googleIdentityColumn(admin)+` = a.id AND issuer = $2)
 		`+adminAccountSource(admin), admin.Id, issuer).Scan(&linked)
 	return linked, err
 }
@@ -97,7 +104,7 @@ func adminAccountSource(admin types.TokenInput) string {
 	return "FROM admin_user a WHERE a.id = $1"
 }
 
-func adminIdentityColumn(admin types.TokenInput) string {
+func googleIdentityColumn(admin types.TokenInput) string {
 	if admin.Type == types.RoleUser {
 		return "user_id"
 	}

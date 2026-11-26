@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSignIn, mailer access.InvitationMailer) http.Handler {
+func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSignIn, mailer access.InvitationMailer, emailCodeMailer func(context.Context, string, string) error) http.Handler {
 	mux := http.NewServeMux()
 	google.RegisterRoutes(mux)
 	forms.RegisterRoutes(mux, db, &auth.AuthService{}, frontendOrigin)
@@ -25,6 +25,7 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 	accessStore := access.Store{DB: db}
 	users := user.NewHandler(userService, authService)
 	users.Store = userStore
+	users.EmailCodeMailer = emailCodeMailer
 	users.RegisterRoutes(mux, "/api/v1", accessStore.Resolve, frontendOrigin)
 	accessStore.RegisterRoutes(mux, authService, frontendOrigin, mailer)
 
@@ -39,7 +40,7 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 }
 
 func NewHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string) (http.Handler, error) {
-	mailer, err := access.ReadInvitationMailer()
+	sender, err := access.ReadGmailSender()
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func NewHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string) (h
 	if err != nil {
 		return nil, err
 	}
-	return newHandler(db, frontendOrigin, google, mailer), nil
+	return newHandler(db, frontendOrigin, google, sender.InvitationMailer(), sender.SendVerificationCode), nil
 }
 
 func Run(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {

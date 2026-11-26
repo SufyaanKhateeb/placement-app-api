@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -9,14 +10,17 @@ import (
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
 	"github.com/SufyaanKhateeb/college-placement-app-api/middlewares"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/types"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 )
 
 type Handler struct {
-	UserService types.UserService
-	AuthService types.AuthService
-	Store       *Store
+	UserService     types.UserService
+	AuthService     types.AuthService
+	Store           *Store
+	EmailCodeMailer func(context.Context, string, string) error
+	frontendOrigin  string
 }
 
 func NewHandler(users types.UserService, auth types.AuthService) *Handler {
@@ -33,7 +37,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string, resolve midd
 		utils.WriteJsonError(w, http.StatusGone, errors.New("use an admin invitation or promote an existing account"))
 	})
 	if h.Store != nil {
+		h.frontendOrigin = frontendOrigin
 		h.registerInvitationRoutes(mux, prefix, authenticate, frontendOrigin)
+		h.registerEmailVerificationRoutes(mux, prefix, frontendOrigin)
 	}
 	mux.Handle("POST "+prefix+"/refresh", authenticate(h.profile))
 	mux.Handle("POST "+prefix+"/logout", authenticate(h.logout))
@@ -119,6 +125,17 @@ func (h *Handler) login(role string) http.HandlerFunc {
 			utils.WriteJsonError(w, err.StatusCode, err.Err)
 			return
 		}
+		if h.Store != nil {
+			verified, err := h.Store.passwordEmailVerified(r.Context(), user.Id, user.Email)
+			if err != nil {
+				writeEmailVerificationError(w, err)
+				return
+			}
+			if !verified {
+				h.startEmailVerification(w, r, emailChallenge{recipient: user.Email, userID: &user.Id, passwordHash: user.Password})
+				return
+			}
+		}
 		h.startSession(w, http.StatusOK, types.TokenInput{Id: user.Id, Type: types.RoleUser})
 	}
 }
@@ -130,6 +147,18 @@ var passwordSpecial = regexp.MustCompile(`[!@#$%^&*(),.?":{}|<>]`)
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	var payload types.RegisterUserPayload
 	if !readPayload(w, r, &payload) || !validRegistration(w, payload) {
+		return
+	}
+	if h.Store != nil {
+		hash, err := auth.HashPassword(payload.Password)
+		if err != nil {
+			writeEmailVerificationError(w, err)
+			return
+		}
+		h.startEmailVerification(w, r, emailChallenge{
+			recipient: payload.Email, firstName: payload.FirstName,
+			lastName: payload.LastName, passwordHash: hash,
+		})
 		return
 	}
 	user, err := h.UserService.RegisterUser(r.Context(), &payload)

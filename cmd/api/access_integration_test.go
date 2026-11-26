@@ -87,8 +87,12 @@ func TestRoleManagementPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := pool.Exec(ctx, "INSERT INTO verified_user_emails SELECT id, lower(email) FROM app_user WHERE id = $1", memberID); err != nil {
+		t.Fatal(err)
+	}
+
 	const origin = "http://localhost:5173"
-	handler := newHandler(pool, origin, nil, nil)
+	handler := newHandler(pool, origin, nil, nil, nil)
 	request := func(method, path, body string, cookie *http.Cookie, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(body)).WithContext(ctx)
