@@ -25,6 +25,7 @@ type googleTestStore struct {
 	identity       GoogleIdentity
 	err            error
 	invitationHash []byte
+	linkedUser     int
 }
 
 func (s *googleTestStore) ResolveGoogleAccount(_ context.Context, identity GoogleIdentity) (types.TokenInput, error) {
@@ -37,7 +38,13 @@ func (s *googleTestStore) ResolveInvitedGoogleAccount(ctx context.Context, ident
 	return s.ResolveGoogleAccount(ctx, identity)
 }
 
-type googleTestSessions struct{ types.AuthService }
+func (s *googleTestStore) LinkGoogleUser(_ context.Context, id int, identity GoogleIdentity) error {
+	s.linkedUser = id
+	s.identity = identity
+	return s.err
+}
+
+type googleTestSessions struct{ googleAdminTestSessions }
 
 func (googleTestSessions) CreateTokens(*types.TokenInput) (string, string, error) {
 	return "access", "refresh", nil
@@ -58,21 +65,24 @@ func TestGoogleSignInCallback(t *testing.T) {
 		wantAccount   bool
 		invitation    bool
 		changeCookie  bool
+		userLink      bool
 	}{
-		{"valid identity", "state", "nonce", true, nil, "/", true, false, false},
-		{"legacy account requires linking", "state", "nonce", true, ErrGoogleAccountExists, "/login?error=google_link_required", true, false, false},
-		{"state mismatch", "wrong", "nonce", true, nil, "/login?error=google_failed", false, false, false},
-		{"nonce mismatch", "state", "wrong", true, nil, "/login?error=google_failed", false, false, false},
-		{"unverified email", "state", "nonce", false, nil, "/login?error=google_failed", false, false, false},
-		{"invited Google identity", "state", "nonce", true, nil, "/admin/invitation", true, true, false},
-		{"invitation cookie changed during OAuth", "state", "nonce", true, nil, "/admin/invitation?error=google_failed", false, true, true},
-		{"invited but unverified", "state", "nonce", false, nil, "/admin/invitation?error=google_failed", false, true, false},
+		{"valid identity", "state", "nonce", true, nil, "/", true, false, false, false},
+		{"legacy account requires linking", "state", "nonce", true, ErrGoogleAccountExists, "/login?error=google_link_required", true, false, false, false},
+		{"state mismatch", "wrong", "nonce", true, nil, "/login?error=google_failed", false, false, false, false},
+		{"nonce mismatch", "state", "wrong", true, nil, "/login?error=google_failed", false, false, false, false},
+		{"unverified email", "state", "nonce", false, nil, "/login?error=google_failed", false, false, false, false},
+		{"invited Google identity", "state", "nonce", true, nil, "/admin/invitation", true, true, false, false},
+		{"invitation cookie changed during OAuth", "state", "nonce", true, nil, "/admin/invitation?error=google_failed", false, true, true, false},
+		{"invited but unverified", "state", "nonce", false, nil, "/admin/invitation?error=google_failed", false, true, false, false},
+		{"explicit user connection", "state", "nonce", true, nil, "/account", true, false, false, true},
+		{"explicit user connection with a different session", "state", "nonce", true, nil, "/account?error=google_user_session_expired", false, false, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
 				"iss": googleIssuer, "aud": "client", "sub": "google-user",
 				"exp": time.Now().Add(time.Minute).Unix(), "nonce": tc.tokenNonce,
-				"email": "user@example.com", "email_verified": tc.emailVerified,
+				"email": "user@example.com", "email_verified": tc.emailVerified, "hd": "example.com",
 			}).SignedString(privateKey)
 			if err != nil {
 				t.Fatal(err)
@@ -113,6 +123,13 @@ func TestGoogleSignInCallback(t *testing.T) {
 				}
 				request.AddCookie(utils.AdminInvitationCookie(signIn.frontend, cookieToken, time.Hour))
 			}
+			if tc.userLink {
+				mode, ref = googleUserLinkFlow, "7"
+				if tc.changeCookie {
+					ref = "9"
+				}
+				request.AddCookie(&http.Cookie{Name: "ACCESS_TOKEN", Value: types.RoleUser})
+			}
 			request.AddCookie(signIn.flowCookie(signIn.signedFlow("state", "verifier", "nonce", mode, ref), 60))
 			response := httptest.NewRecorder()
 			signIn.callback(response, request)
@@ -121,6 +138,12 @@ func TestGoogleSignInCallback(t *testing.T) {
 			}
 			if (store.identity.Subject == "google-user") != tc.wantAccount {
 				t.Fatalf("unexpected account resolution: %+v", store.identity)
+			}
+			if tc.wantAccount && store.identity.HostedDomain != "example.com" {
+				t.Fatal("verified Google hosted domain did not reach account resolution")
+			}
+			if tc.userLink && tc.wantAccount && store.linkedUser != 7 {
+				t.Fatal("callback connected Google to the wrong user")
 			}
 			cookies := strings.Join(response.Header().Values("Set-Cookie"), "\n")
 			if strings.Contains(cookies, "ACCESS_TOKEN=") != (tc.wantRedirect == "/" || tc.wantRedirect == "/admin/invitation") {

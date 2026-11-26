@@ -74,6 +74,12 @@ The Gmail transport test uses a local SMTP server with a fixture TLS certificate
 
 For application rollback, retain the admin membership tables, pending invitations, and access history. Block `POST /api/v1/register-admin` when serving the previous API and confirm a legacy admin still holds Role Manager. Downgrading the schema discards invitation and admin membership state and is intended for disposable rehearsal databases.
 
+## Password account email verification
+
+Apply migration `20261127090000` before publishing the paired API and UI. New password sign-ups and regular password accounts verifying on their next login require the same Gmail SMTP settings as admin invitations. Already linked Google accounts and admin invitation enrollment keep their existing sign-in paths.
+
+Automatic Google linking applies to a unique, email-verified regular password account with a matching personal Gmail address. Other Google accounts can be connected from **Account** after password sign-in and confirmation.
+
 ## Vercel deployment
 
 The React UI and Go API are released to one Vercel project at one HTTPS origin. The repositories remain separate. The release workflow checks out a specific UI commit into `web/`, then sends both source trees to Vercel to build the UI and the Go Function in `api/index.go`. The original `go run ./cmd` server is still the local entry point. PostgreSQL remains on Neon.

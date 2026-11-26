@@ -20,20 +20,22 @@ import (
 	"time"
 )
 
-func TestGmailInvitationMailer(t *testing.T) {
+func TestGmailSender(t *testing.T) {
 	const (
 		sender      = "invitations@example.invalid"
 		recipient   = "invitee@example.invalid"
 		appPassword = "fixturemailpassw"
 		link        = "https://placement.example.invalid/admin/invitation#fixture-token"
+		code        = "123456"
 	)
 	serverTLS, clientTLS := smtpFixtureTLS(t)
 	for _, test := range []struct {
-		name  string
-		reply string
+		name, reply, subject, content, expiry string
+		sendCode                              bool
 	}{
-		{"accepted", "250 message accepted"},
-		{"rejected", "554 message rejected"},
+		{"invitation accepted", "250 message accepted", "Your Placement App admin invitation", link, "24 hours", false},
+		{"invitation rejected", "554 message rejected", "Your Placement App admin invitation", link, "24 hours", false},
+		{"verification accepted", "250 message accepted", "Your Placement App verification code", code, "10 minutes", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			server, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
@@ -90,28 +92,32 @@ func TestGmailInvitationMailer(t *testing.T) {
 				to, toErr := message.Header.AddressList("To")
 				if fromErr != nil || len(from) != 1 || from[0].Address != sender ||
 					toErr != nil || len(to) != 1 || to[0].Address != recipient ||
-					message.Header.Get("Subject") != "Your Placement App admin invitation" {
-					result <- errors.New("unexpected invitation headers")
+					message.Header.Get("Subject") != test.subject {
+					result <- errors.New("unexpected mail headers")
 					return
 				}
 				body, err := io.ReadAll(quotedprintable.NewReader(message.Body))
-				if err != nil || !strings.Contains(string(body), link) || !strings.Contains(string(body), "24 hours") {
-					result <- errors.New("invitation body omitted the link or expiry")
+				if err != nil || !strings.Contains(string(body), test.content) || !strings.Contains(string(body), test.expiry) {
+					result <- errors.New("mail body omitted the expected content or expiry")
 					return
 				}
 				result <- smtp.PrintfLine("%s", test.reply)
 			}()
 
-			mailer := gmailInvitationMailer(server.Addr().String(), clientTLS, sender, appPassword)
-			err = mailer(context.Background(), recipient, link)
+			send := gmailSender(server.Addr().String(), clientTLS, sender, appPassword)
+			if test.sendCode {
+				err = send.SendVerificationCode(context.Background(), recipient, code)
+			} else {
+				err = send.InvitationMailer()(context.Background(), recipient, link)
+			}
 			_ = server.Close()
 			if fixtureErr := <-result; fixtureErr != nil {
 				t.Fatalf("SMTP fixture: %v", fixtureErr)
 			}
-			if test.name == "accepted" && err != nil {
-				t.Fatalf("send invitation: %v", err)
+			if test.reply == "250 message accepted" && err != nil {
+				t.Fatalf("send mail: %v", err)
 			}
-			if test.name == "rejected" {
+			if test.reply == "554 message rejected" {
 				var reply *textproto.Error
 				if !errors.As(err, &reply) || reply.Code != 554 {
 					t.Fatalf("expected SMTP rejection, got %v", err)
@@ -148,18 +154,18 @@ func smtpFixtureTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	return server, client
 }
 
-func TestInvitationMailerConfiguration(t *testing.T) {
+func TestGmailSenderConfiguration(t *testing.T) {
 	t.Setenv("ADMIN_INVITE_GMAIL_EMAIL", "")
 	t.Setenv("ADMIN_INVITE_GMAIL_APP_PASSWORD", "")
-	if mailer, err := ReadInvitationMailer(); mailer != nil || err != nil {
+	if mailer, err := ReadGmailSender(); mailer != nil || err != nil {
 		t.Fatalf("expected mail delivery disabled with no Gmail settings, got %v", err)
 	}
 	t.Setenv("ADMIN_INVITE_GMAIL_EMAIL", "invitations@example.invalid")
-	if mailer, err := ReadInvitationMailer(); mailer != nil || err == nil {
+	if mailer, err := ReadGmailSender(); mailer != nil || err == nil {
 		t.Fatal("expected an error for incomplete Gmail settings")
 	}
 	t.Setenv("ADMIN_INVITE_GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
-	if mailer, err := ReadInvitationMailer(); mailer == nil || err != nil {
+	if mailer, err := ReadGmailSender(); mailer == nil || err != nil {
 		t.Fatalf("expected a configured Gmail sender, got %v", err)
 	}
 }

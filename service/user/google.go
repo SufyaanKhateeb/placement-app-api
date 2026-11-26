@@ -40,7 +40,17 @@ func (s *Store) ResolveGoogleAccount(ctx context.Context, identity auth.GoogleId
 		return types.TokenInput{}, err
 	}
 
-	// Google can create regular accounts. Existing accounts require explicit linking.
+	if identity.IsPersonalGmail() {
+		id, err := autoLinkGoogleAccount(ctx, tx, identity, email)
+		if err != nil {
+			return types.TokenInput{}, err
+		}
+		if id != 0 {
+			return types.TokenInput{Id: id, Type: types.RoleUser}, tx.Commit(ctx)
+		}
+	}
+
+	// A new Google account can be created only when no existing account matches.
 	account.Type = types.RoleUser
 	err = tx.QueryRow(ctx, `
 		INSERT INTO app_user (firstname, lastname, email, password)

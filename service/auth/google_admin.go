@@ -33,16 +33,11 @@ func (g *GoogleSignIn) startAdminLink(w http.ResponseWriter, r *http.Request) {
 		utils.WriteJsonError(w, http.StatusUnauthorized, errors.New("sign in as an admin to connect Google"))
 		return
 	}
-	body := http.MaxBytesReader(w, r.Body, 4096)
-	decoder := json.NewDecoder(body)
-	var input struct {
-		Password string `json:"password"`
-	}
-	if decoder.Decode(&input) != nil || input.Password == "" || decoder.Decode(new(any)) != io.EOF {
-		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("admin password is required"))
+	password, ok := googleLinkPassword(w, r)
+	if !ok {
 		return
 	}
-	if err := g.accounts.CheckGoogleAdminPassword(r.Context(), admin, input.Password); err != nil {
+	if err := g.accounts.CheckGoogleAdminPassword(r.Context(), admin, password); err != nil {
 		if errors.Is(err, ErrGoogleAdminPassword) {
 			utils.WriteJsonError(w, http.StatusForbidden, ErrGoogleAdminPassword)
 		} else {
@@ -53,7 +48,25 @@ func (g *GoogleSignIn) startAdminLink(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJson(w, http.StatusOK, map[string]string{"url": g.begin(w, googleAdminLinkFlow, adminReference(admin))})
 }
 
+func googleLinkPassword(w http.ResponseWriter, r *http.Request) (string, bool) {
+	body := http.MaxBytesReader(w, r.Body, 4096)
+	decoder := json.NewDecoder(body)
+	var input struct {
+		Password string `json:"password"`
+	}
+	if decoder.Decode(&input) != nil || input.Password == "" || decoder.Decode(new(any)) != io.EOF {
+		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("password is required"))
+		return "", false
+	}
+	return input.Password, true
+}
+
 func (g *GoogleSignIn) activeAdmin(r *http.Request) (types.TokenInput, bool) {
+	account, ok := g.activeAccount(r)
+	return account, ok && account.IsAdmin()
+}
+
+func (g *GoogleSignIn) activeAccount(r *http.Request) (types.TokenInput, bool) {
 	cookie, err := r.Cookie("ACCESS_TOKEN")
 	if err != nil {
 		return types.TokenInput{}, false
@@ -66,8 +79,7 @@ func (g *GoogleSignIn) activeAdmin(r *http.Request) (types.TokenInput, bool) {
 	if !ok || claims.Id <= 0 {
 		return types.TokenInput{}, false
 	}
-	admin := types.TokenInput{Id: claims.Id, Type: claims.Type, AdminMode: claims.AdminMode}
-	return admin, admin.IsAdmin()
+	return types.TokenInput{Id: claims.Id, Type: claims.Type, AdminMode: claims.AdminMode}, true
 }
 
 func adminReference(admin types.TokenInput) string {

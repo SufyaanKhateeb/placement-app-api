@@ -98,6 +98,7 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 	exec("INSERT INTO access_assignments VALUES ('admin', $1, $2) ON CONFLICT DO NOTHING", managerID, managerRole)
 	// The member and legacy admin can have identical numeric IDs.
 	memberID := id("INSERT INTO app_user (id, firstname, lastname, email, password) VALUES ($1,'Existing','Member',$2,$3) RETURNING id", managerID, memberEmail, hash)
+	exec("INSERT INTO verified_user_emails SELECT id, lower(email) FROM app_user WHERE id = $1", memberID)
 	identity := auth.GoogleIdentity{Issuer: "https://accounts.google.com", Subject: fixturePrefix + "subject", Email: memberEmail}
 	exec("INSERT INTO oidc_identity (issuer, subject, user_id) VALUES ($1,$2,$3)", identity.Issuer, identity.Subject, memberID)
 	definition := `{"title":"PLA-19 fixture","fields":[]}`
@@ -114,7 +115,7 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 			return errors.New("fixture delivery failure")
 		}
 		return nil
-	})
+	}, nil)
 	send := func(method, path, body string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(body)).WithContext(ctx)
 		req.Header.Set("Origin", origin)

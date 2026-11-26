@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 
 	"strings"
 	"time"
@@ -26,17 +27,24 @@ const googleFlowLifetime = 10 * time.Minute
 
 const (
 	googleUserFlow      = "user"
+	googleUserLinkFlow  = "user-link"
 	googleAdminFlow     = "admin"
 	googleAdminLinkFlow = "admin-link"
 	googleInviteFlow    = "admin-invite"
 )
 
 type GoogleIdentity struct {
-	Issuer    string
-	Subject   string
-	Email     string
-	FirstName string
-	LastName  string
+	Issuer       string
+	Subject      string
+	Email        string
+	FirstName    string
+	LastName     string
+	HostedDomain string
+}
+
+func (identity GoogleIdentity) IsPersonalGmail() bool {
+	local, domain, ok := strings.Cut(identity.Email, "@")
+	return ok && local != "" && strings.EqualFold(domain, "gmail.com") && identity.HostedDomain == ""
 }
 
 var ErrGoogleAccountExists = errors.New("existing account requires linking")
@@ -48,6 +56,9 @@ type GoogleAccountStore interface {
 	CheckGoogleAdminPassword(context.Context, types.TokenInput, string) error
 	LinkGoogleAdmin(context.Context, types.TokenInput, GoogleIdentity) error
 	GoogleAdminLinked(context.Context, types.TokenInput, string) (bool, error)
+	CheckGoogleUserPassword(context.Context, int, string) error
+	LinkGoogleUser(context.Context, int, GoogleIdentity) error
+	GoogleUserLinkStatus(context.Context, int, string) (bool, bool, error)
 }
 
 type GoogleSignIn struct {
@@ -115,6 +126,8 @@ func (g *GoogleSignIn) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/v1/auth/google/invitation", g.startInvitation)
 		mux.HandleFunc("POST /api/v1/auth/google/admin/link", g.startAdminLink)
 		mux.HandleFunc("GET /api/v1/auth/google/admin/link", g.adminLinkStatus)
+		mux.HandleFunc("POST /api/v1/auth/google/link", g.startUserLink)
+		mux.HandleFunc("GET /api/v1/auth/google/link", g.userLinkStatus)
 		mux.HandleFunc("GET /api/v1/auth/google/callback", g.callback)
 	}
 }
@@ -196,6 +209,15 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var admin types.TokenInput
+	var user types.TokenInput
+	if mode == googleUserLinkFlow {
+		var ok bool
+		user, ok = g.activeUser(r)
+		if !ok || params[4] != strconv.Itoa(user.Id) {
+			g.redirectError(w, r, mode, "google_user_session_expired")
+			return
+		}
+	}
 	if mode == googleAdminLinkFlow {
 		var ok bool
 		admin, ok = g.adminLinkAccount(r, params[4])
@@ -214,6 +236,10 @@ func (g *GoogleSignIn) callback(w http.ResponseWriter, r *http.Request) {
 	identity, err := g.exchange(ctx, code, params[1], params[2])
 	if err != nil {
 		g.redirectError(w, r, mode, "google_failed")
+		return
+	}
+	if mode == googleUserLinkFlow {
+		g.finishUserLink(w, r, ctx, user.Id, identity)
 		return
 	}
 	if mode == googleAdminLinkFlow {
@@ -310,6 +336,7 @@ func (g *GoogleSignIn) exchange(ctx context.Context, code, verifier, nonce strin
 	var claims struct {
 		Email         string `json:"email"`
 		EmailVerified bool   `json:"email_verified"`
+		HostedDomain  string `json:"hd"`
 		FirstName     string `json:"given_name"`
 		LastName      string `json:"family_name"`
 	}
@@ -321,7 +348,7 @@ func (g *GoogleSignIn) exchange(ctx context.Context, code, verifier, nonce strin
 		slog.Warn("Google sign-in identity claims rejected", "subject_present", verified.Subject != "", "nonce_matches", nonce != "" && verified.Nonce == nonce, "email_verified", claims.EmailVerified, "email_present", claims.Email != "")
 		return GoogleIdentity{}, errors.New("Google identity is missing required verified claims")
 	}
-	return GoogleIdentity{Issuer: googleIssuer, Subject: verified.Subject, Email: claims.Email, FirstName: claims.FirstName, LastName: claims.LastName}, nil
+	return GoogleIdentity{Issuer: googleIssuer, Subject: verified.Subject, Email: claims.Email, FirstName: claims.FirstName, LastName: claims.LastName, HostedDomain: claims.HostedDomain}, nil
 }
 
 func (g *GoogleSignIn) sessionCookie(w http.ResponseWriter, name, value string, lifetime time.Duration) {
@@ -334,6 +361,8 @@ func (g *GoogleSignIn) sessionCookie(w http.ResponseWriter, name, value string, 
 func (g *GoogleSignIn) redirectError(w http.ResponseWriter, r *http.Request, mode, code string) {
 	destination := "/login"
 	switch mode {
+	case googleUserLinkFlow:
+		destination = "/account"
 	case googleAdminFlow:
 		destination = "/admin/login"
 	case googleAdminLinkFlow:
