@@ -115,7 +115,7 @@ jobs:
         id: migrations
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
-        run: go run ./cmd/migrate up
+        run: go run ./cmd/migrate -managed up
       - name: Promote the deployment
         id: promotion
         env:

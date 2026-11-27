@@ -24,7 +24,9 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	config.InitConfig()
+	if err := config.InitConfig(); err != nil {
+		return err
+	}
 	pool, err := db.NewDbPool(config.Env.DbUrl)
 	if err != nil {
 		return fmt.Errorf("initialize database pool: %w", err)
@@ -38,5 +40,5 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("connect to database: %w", err)
 	}
 	slog.Info("Connected to PostgreSQL")
-	return api.Run(ctx, ":"+config.Env.Port, pool, config.Env.FrontendOrigin)
+	return api.RunLocal(ctx, "127.0.0.1:"+config.Env.Port, pool, config.Env.FrontendOrigin)
 }

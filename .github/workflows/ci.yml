@@ -27,7 +27,7 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     env:
-      MIGRATION_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/placement_test?sslmode=disable
+      LOCAL_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/placement_test?sslmode=disable
       PLACEMENT_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/placement_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4

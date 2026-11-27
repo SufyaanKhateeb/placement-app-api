@@ -44,15 +44,27 @@ func NewHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string) (h
 	if err != nil {
 		return nil, err
 	}
+	return configuredHandler(ctx, db, frontendOrigin, sender.InvitationMailer(), sender.SendVerificationCode)
+}
+
+func configuredHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string, mailer access.InvitationMailer, emailCodeMailer func(context.Context, string, string) error) (http.Handler, error) {
 	google, err := auth.NewGoogleSignIn(ctx, user.NewStore(db), &auth.AuthService{}, frontendOrigin)
 	if err != nil {
 		return nil, err
 	}
-	return newHandler(db, frontendOrigin, google, sender.InvitationMailer(), sender.SendVerificationCode), nil
+	return newHandler(db, frontendOrigin, google, mailer, emailCodeMailer), nil
 }
 
-func Run(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {
-	handler, err := NewHandler(ctx, db, frontendOrigin)
+func RunLocal(ctx context.Context, addr string, db *pgxpool.Pool, frontendOrigin string) error {
+	handler, err := configuredHandler(ctx, db, frontendOrigin,
+		func(_ context.Context, email, link string) error {
+			slog.Info("Local admin invitation", "recipient", email, "link", link)
+			return nil
+		},
+		func(_ context.Context, email, code string) error {
+			slog.Info("Local verification email", "recipient", email, "code", code)
+			return nil
+		})
 	if err != nil {
 		return err
 	}
