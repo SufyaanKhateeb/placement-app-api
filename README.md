@@ -4,22 +4,24 @@ The API uses Go 1.23.1 or later and managed PostgreSQL on Neon. The frontend use
 
 ## Run locally with a separate database
 
-Run PostgreSQL locally and create an empty database named `placement_dev`. With Docker, start one with:
+Use the Neon `development` branch and its `placement_dev` database for day-to-day development. The branch was provisioned without production rows. In the ignored API `.env.local`, set `NEON_DEV_HOST` to the branch's direct endpoint hostname and `LOCAL_DATABASE_URL` to that endpoint's development read/write connection string. Use `sslmode=verify-full` and omit `channel_binding` for the pinned Go drivers. The local server rejects mismatched endpoints and any endpoint also configured as a managed database.
+
+The runtime login has data access to `placement_dev`. To apply schema migrations, temporarily use the development branch's existing database owner connection in your shell. With the Neon CLI set to the Placement App project:
 
 ```powershell
-docker run --name placement-dev-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=placement_dev -p 127.0.0.1:5432:5432 -d postgres:16
+$devMigrationURL = neon connection-string development --database-name placement_dev --role-name neondb_owner --ssl verify-full
+$env:LOCAL_DATABASE_URL = $devMigrationURL -replace '&channel_binding=[^&]+', ''
+try {
+    go run ./cmd/migrate up
+} finally {
+    Remove-Item Env:LOCAL_DATABASE_URL
+}
 ```
 
-From the API checkout:
+Run `go run ./cmd` in the API checkout and `npm run dev` in the UI checkout. Open `http://localhost:3000`. The API captures verification codes and invitation links in its terminal. For an OTP smoke test, sign up with a fresh fixture address, switch away to get the code, return to the app, and submit it.
 
-```powershell
-go run ./cmd/migrate up
-go run ./cmd
-```
+For offline or disposable testing, leave `NEON_DEV_HOST` unset. Local commands then accept loopback PostgreSQL only. The default is `postgres://postgres:postgres@127.0.0.1:5432/placement_dev?sslmode=disable`. Use `LOCAL_DATABASE_URL` to specify another local port or database.
 
-The local commands use `LOCAL_DATABASE_URL` from the environment or the ignored `.env.local` file. The default is `postgres://postgres:postgres@127.0.0.1:5432/placement_dev?sslmode=disable`. They require a loopback PostgreSQL address. The local API listens at `http://127.0.0.1:8090`, generates a session key at startup, and captures verification codes and invitation links in its terminal. Run `npm run dev` in the UI checkout and open `http://localhost:3000`.
-
-To exercise OTP, register a fresh fixture address, switch tabs to read the code in the API terminal, return to the app and submit it. The UI repository also includes repeatable browser tests for this flow.
 
 ## Managed database
 

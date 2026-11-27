@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/lpernett/godotenv"
 )
@@ -26,11 +27,19 @@ var Env Config
 const defaultLocalDatabaseURL = "postgres://postgres:postgres@127.0.0.1:5432/placement_dev?sslmode=disable"
 
 func LocalDatabaseURL() (string, error) {
-	database := getEnv("LOCAL_DATABASE_URL", defaultLocalDatabaseURL)
+	database := os.Getenv("LOCAL_DATABASE_URL")
+	neonHost := strings.ToLower(strings.TrimSpace(os.Getenv("NEON_DEV_HOST")))
+	if database == "" {
+		if neonHost != "" {
+			return "", errors.New("NEON_DEV_HOST requires LOCAL_DATABASE_URL")
+		}
+		database = defaultLocalDatabaseURL
+	}
+
 	address, err := url.Parse(database)
 	if err != nil || (address.Scheme != "postgres" && address.Scheme != "postgresql") ||
-		!loopbackHost(address.Hostname()) || address.Path == "" || address.Path == "/" || address.Fragment != "" {
-		return "", errors.New("LOCAL_DATABASE_URL must be a PostgreSQL URL with a loopback host and a database name")
+		address.Hostname() == "" || address.Path == "" || address.Path == "/" || address.Fragment != "" {
+		return "", errors.New("LOCAL_DATABASE_URL must be a PostgreSQL URL with a host and database name")
 	}
 
 	options, err := url.ParseQuery(address.RawQuery)
@@ -43,7 +52,33 @@ func LocalDatabaseURL() (string, error) {
 			return "", errors.New("LOCAL_DATABASE_URL only accepts the sslmode query option")
 		}
 	}
+	host := strings.ToLower(address.Hostname())
+	if neonHost == "" {
+		if !loopbackHost(host) {
+			return "", errors.New("remote LOCAL_DATABASE_URL requires a pinned NEON_DEV_HOST")
+		}
+		return database, nil
+	}
+	if host != neonHost || !strings.HasSuffix(host, ".neon.tech") || host != directNeonHost(host) ||
+		(address.Port() != "" && address.Port() != "5432") || options.Get("sslmode") != "verify-full" {
+		return "", errors.New("LOCAL_DATABASE_URL must use the pinned direct NEON_DEV_HOST with sslmode=verify-full")
+	}
+	for _, key := range []string{"DATABASE_URL", "DATABASE_URL_UNPOOLED", "MIGRATION_DATABASE_URL"} {
+		managed, err := url.Parse(os.Getenv(key))
+		if err == nil && directNeonHost(strings.ToLower(managed.Hostname())) == host {
+			return "", errors.New("NEON_DEV_HOST matches a managed database endpoint")
+		}
+	}
 	return database, nil
+}
+
+// Neon uses the same endpoint name for direct and pooled connections.
+func directNeonHost(host string) string {
+	endpoint, domain, found := strings.Cut(host, ".")
+	if !found {
+		return host
+	}
+	return strings.TrimSuffix(endpoint, "-pooler") + "." + domain
 }
 
 func loopbackHost(host string) bool {
@@ -69,13 +104,6 @@ func InitConfig() error {
 		PublicKey:         &key.PublicKey,
 	}
 	return nil
-}
-
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok && value != "" {
-		return value
-	}
-	return fallback
 }
 
 func getEnvAsInt(key string, fallback int64) int64 {

@@ -3,6 +3,7 @@ package main
 import "testing"
 
 func TestMigrationDatabaseTarget(t *testing.T) {
+	t.Setenv("NEON_DEV_HOST", "")
 	const local = "postgres://localhost/placement_dev"
 	const managed = "postgres://production.example.invalid/production"
 	t.Setenv("LOCAL_DATABASE_URL", local)
