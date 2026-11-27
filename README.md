@@ -2,33 +2,37 @@
 
 The API uses Go 1.23.1 or later and managed PostgreSQL on Neon. The frontend uses the existing `/api/v1` routes.
 
-## Connect to Neon
+## Run locally with a separate database
 
-Create a Neon project and use the **direct** connection string from the Connect dialog. Set `DATABASE_URL` in your ignored local `.env` or deployment secrets. The Go API already maintains its own connection pool.
+Run PostgreSQL locally and create an empty database named `placement_dev`. With Docker, start one with:
 
-Use `sslmode=verify-full` to verify the server certificate and hostname. If the copied URL includes `channel_binding=require`, omit that parameter for the Go drivers pinned in this repository. Keep the rest of the connection details from Neon.
+```powershell
+docker run --name placement-dev-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=placement_dev -p 127.0.0.1:5432:5432 -d postgres:16
+```
 
-If the application later uses a pooled endpoint, set `DATABASE_URL` to the pooled URL and `MIGRATION_DATABASE_URL` to the direct URL. When the latter is unset, migrations use `DATABASE_URL`. [Neon connection guide](https://neon.com/docs/connect/connect-from-any-app) · [Connection pooling](https://neon.com/docs/connect/connection-pooling)
-
-Set `PRIVATE_KEY_PATH` and `PUBLIC_KEY_PATH` to the RSA keys used for session tokens. `PORT` defaults to `8090` and `FRONTEND_ORIGIN` defaults to `http://localhost:5173`.
-
-## Initialize or move the database
-
-For an empty database, run the migrations and start the API from the repository root.
+From the API checkout:
 
 ```powershell
 go run ./cmd/migrate up
 go run ./cmd
 ```
 
-To move existing accounts and verification records, restore a full dump of the existing database into an empty Neon database using the direct endpoint. Include the `schema_migrations` table, omit source ownership and grants during restore, and run the migration command afterward to apply any pending repository migrations. Verify the restored data before directing the API to Neon. [Neon import guide](https://neon.com/docs/import/import-from-postgres)
+The local commands use `LOCAL_DATABASE_URL` from the environment or the ignored `.env.local` file. The default is `postgres://postgres:postgres@127.0.0.1:5432/placement_dev?sslmode=disable`. They require a loopback PostgreSQL address. The local API listens at `http://127.0.0.1:8090`, generates a session key at startup, and captures verification codes and invitation links in its terminal. Run `npm run dev` in the UI checkout and open `http://localhost:3000`.
 
-Run the test suite with `go test ./...`.
+To exercise OTP, register a fresh fixture address, switch tabs to read the code in the API terminal, return to the app and submit it. The UI repository also includes repeatable browser tests for this flow.
+
+## Managed database
+
+Use Neon's pooled `DATABASE_URL` for the Vercel API and the direct `MIGRATION_DATABASE_URL` for the release workflow. The workflow selects that database explicitly with `go run ./cmd/migrate -managed up`. [Neon connection guide](https://neon.com/docs/connect/connect-from-any-app)
+
+Run the API test suite with `go test ./...`. To include the PostgreSQL integration tests, set `PLACEMENT_TEST_DATABASE_URL` to a disposable migrated test database.
+
+
 ## Google sign-in
 
-Register a Google OAuth web client with the exact API redirect URI, for example: `http://localhost:8091/api/v1/auth/google/callback`. Set `GOOGLE_OIDC_CLIENT_ID`, `GOOGLE_OIDC_CLIENT_SECRET`, and `GOOGLE_OIDC_REDIRECT_URL` in the API's ignored environment file. Use `localhost` for both the local API URL and `FRONTEND_ORIGIN`. For production, the frontend and API must use HTTPS and be on the same site for browser session cookies.
+Register a Google OAuth web client with the exact API redirect URI, for example: `http://localhost:3000/api/v1/auth/google/callback`. Set `GOOGLE_OIDC_CLIENT_ID`, `GOOGLE_OIDC_CLIENT_SECRET`, and `GOOGLE_OIDC_REDIRECT_URL` in the API's ignored environment file. In local development the Vite proxy forwards the callback to the API. For production, the frontend and API must use HTTPS and be on the same site for browser session cookies.
 
-Apply the database migration before enabling Google sign-in. A first Google sign-in creates a regular app account when the email is unused. An existing account is never matched by email alone. Linking existing accounts and provisioning Google admin identities are separate workflows.
+Apply the database migration before enabling Google sign-in. A first Google sign-in creates a regular app account when the email is unused. An existing account can be linked automatically only when it meets the personal Gmail and email verification requirements below.
 Admins can sign in at `/admin/login` with their existing password. On the admin account page, confirm the current password and connect a Google account with the same verified email. Future visits to `/admin/login` support Google sign-in for that linked identity. An identity already connected to another account cannot be reused for admin access.
 ## Generic user migration
 
@@ -62,10 +66,10 @@ For a release rollback, retain the added tables and access history. The previous
 
 Apply migration `20261126090000` before releasing the paired API and UI. Role Managers can invite an unused email or promote a selected account under **Roles and access**. Invited recipients sign in with a password or Google, then accept the 24-hour invitation. Sending another invitation to the same address replaces the link. Account owners use **Admin sign-in** after access is granted. Their account ID, credentials, and submissions stay with their original account.
 
-The Go API sends invitations from the configured Gmail or Google Workspace mailbox using Gmail SMTP over TLS.
+The deployed Go API sends invitations from the configured Gmail or Google Workspace mailbox using Gmail SMTP over TLS.
 
 1. Turn on **2-Step Verification** for the sender mailbox and create a Google App Password named **Placement App**. The mailbox must allow App Passwords. [Google App Password setup](https://support.google.com/accounts/answer/185833)
-2. In the Vercel project's **Settings → Environment Variables**, set `ADMIN_INVITE_GMAIL_EMAIL` to the full sender email address. Set `ADMIN_INVITE_GMAIL_APP_PASSWORD` to the generated App Password and store it as a **Secret**. For local development use the API's ignored environment file.
+2. In the Vercel project's **Settings → Environment Variables**, set `ADMIN_INVITE_GMAIL_EMAIL` to the full sender email address. Set `ADMIN_INVITE_GMAIL_APP_PASSWORD` to the generated App Password and store it as a **Secret**.
 3. Run the paired release workflow to apply the new settings. After deployment, send a test invitation from **Roles and access** to an approved address.
 
 The API uses `smtp.gmail.com:465` and uses the configured mailbox as the message sender. Leave both mail settings unset to disable new invitation emails while keeping promotion available. Google sign-in uses the separate `GOOGLE_OIDC_*` settings. [Google SMTP documentation](https://knowledge.workspace.google.com/admin/gmail/send-email-from-a-printer-scanner-or-app)
@@ -91,4 +95,4 @@ The React UI and Go API are released to one Vercel project at one HTTPS origin. 
 3. In the API repo's GitHub Actions **production** environment, set secrets `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `VERCEL_TOKEN`, and `MIGRATION_DATABASE_URL` (Neon's direct connection to the same deployed database). Set the variable `PRODUCTION_ORIGIN` to the same HTTPS origin. If the UI repo is private, provide a read-only `UI_CHECKOUT_TOKEN` covering that repository.
 4. From the API repo, run **Release to Vercel** on `main` and enter the full SHA of a reviewed UI `main` commit. The workflow runs tests, builds both components on Vercel, applies pending migrations, promotes the deployment, and checks the public routes. Keep the credentials in Vercel and GitHub secrets.
 
-For local Vite development, keep `VITE_BACKEND_URL=http://localhost:8091/api/v1` or the URL for your local Go server. The deployed UI uses the relative path `/api/v1`.
+The Vite development server and deployed UI both use the relative path `/api/v1`. Vite proxies local requests to the loopback Go server.

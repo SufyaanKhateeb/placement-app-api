@@ -1,12 +1,14 @@
 package config
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
-	"log"
+	"errors"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/lpernett/godotenv"
 )
 
@@ -19,52 +21,58 @@ type Config struct {
 	PublicKey         *rsa.PublicKey
 }
 
-var Env Config = Config{}
+var Env Config
 
-func InitConfig() {
-	godotenv.Load(".env.local")
-	godotenv.Load()
+const defaultLocalDatabaseURL = "postgres://postgres:postgres@127.0.0.1:5432/placement_dev?sslmode=disable"
 
-	Env = Config{
-		DbUrl:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
-		Port:              getEnv("PORT", "8090"),
-		FrontendOrigin:    getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
-		JWTExpirationTime: getEnvAsInt("JWT_EXPIRATION_TIME", 60*5),
-		PrivateKey:        loadPrivateKey(getEnv("PRIVATE_KEY_PATH", "./private.key")),
-		PublicKey:         loadPublicKey(getEnv("PUBLIC_KEY_PATH", "./public.key")),
-	}
-}
-
-func InitConfigWith(envFileNames ...string) {
-	if len(envFileNames) == 0 {
-		panic("Atleast one environment file name is required")
+func LocalDatabaseURL() (string, error) {
+	database := getEnv("LOCAL_DATABASE_URL", defaultLocalDatabaseURL)
+	address, err := url.Parse(database)
+	if err != nil || (address.Scheme != "postgres" && address.Scheme != "postgresql") ||
+		!loopbackHost(address.Hostname()) || address.Path == "" || address.Path == "/" || address.Fragment != "" {
+		return "", errors.New("LOCAL_DATABASE_URL must be a PostgreSQL URL with a loopback host and a database name")
 	}
 
-	err := godotenv.Load(envFileNames...)
+	options, err := url.ParseQuery(address.RawQuery)
 	if err != nil {
-		panic(err)
+		return "", errors.New("LOCAL_DATABASE_URL has invalid query options")
 	}
-
-	Env = Config{
-		DbUrl:             getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"),
-		Port:              getEnv("PORT", "8090"),
-		FrontendOrigin:    getEnv("FRONTEND_ORIGIN", "http://localhost:5173"),
-		JWTExpirationTime: getEnvAsInt("JWT_EXPIRATION_TIME", 60*5),
-		PrivateKey:        loadPrivateKey(getEnv("PRIVATE_KEY_PATH", "./private.key")),
-		PublicKey:         loadPublicKey(getEnv("PUBLIC_KEY_PATH", "./public.key")),
+	for name, values := range options {
+		// Connection options such as host and service can override the URL host.
+		if name != "sslmode" || len(values) != 1 {
+			return "", errors.New("LOCAL_DATABASE_URL only accepts the sslmode query option")
+		}
 	}
+	return database, nil
 }
 
-func getRequiredEnv(key string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
+func loopbackHost(host string) bool {
+	return host == "localhost" || net.ParseIP(host).IsLoopback()
+}
+
+func InitConfig() error {
+	godotenv.Load(".env.local")
+	database, err := LocalDatabaseURL()
+	if err != nil {
+		return err
 	}
-	log.Fatalf("no %s env variable found", key)
-	return ""
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+	Env = Config{
+		DbUrl:             database,
+		Port:              "8090",
+		FrontendOrigin:    "http://localhost:3000",
+		JWTExpirationTime: getEnvAsInt("JWT_EXPIRATION_TIME", 60*5),
+		PrivateKey:        key,
+		PublicKey:         &key.PublicKey,
+	}
+	return nil
 }
 
 func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
+	if value, ok := os.LookupEnv(key); ok && value != "" {
 		return value
 	}
 	return fallback
@@ -79,28 +87,4 @@ func getEnvAsInt(key string, fallback int64) int64 {
 		return i
 	}
 	return fallback
-}
-
-func loadPrivateKey(path string) *rsa.PrivateKey {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	key, err := jwt.ParseRSAPrivateKeyFromPEM(data)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return key
-}
-
-func loadPublicKey(path string) *rsa.PublicKey {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Fatal(err)
-	}
-	key, err := jwt.ParseRSAPublicKeyFromPEM(data)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return key
 }
