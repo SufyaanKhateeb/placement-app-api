@@ -5,12 +5,14 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/forms"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/user"
+	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,12 +33,45 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 
 	return cors.Handler(cors.Options{
 		AllowedOrigins:   []string{frontendOrigin},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
-		ExposedHeaders:   []string{"Link"},
+		ExposedHeaders:   []string{"Link", "Location"},
 		AllowCredentials: true,
 		MaxAge:           300,
-	})(mux)
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1" || strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			if handler, pattern := mux.Handler(r); pattern == "" {
+				handler.ServeHTTP(&routerErrorWriter{ResponseWriter: w}, r)
+				return
+			}
+		}
+		mux.ServeHTTP(w, r)
+	}))
+}
+
+// Convert ServeMux's unmatched-route errors while retaining its Allow header
+// and path normalization redirects.
+type routerErrorWriter struct {
+	http.ResponseWriter
+	wroteError bool
+}
+
+func (w *routerErrorWriter) WriteHeader(status int) {
+	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+		w.wroteError = true
+		// net/http sets plain-text headers before calling WriteHeader.
+		w.Header().Del("Content-Length")
+		utils.WriteJsonError(w.ResponseWriter, status, errors.New(http.StatusText(status)))
+		return
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *routerErrorWriter) Write(p []byte) (int, error) {
+	if w.wroteError {
+		return len(p), nil
+	}
+	return w.ResponseWriter.Write(p)
 }
 
 func NewHandler(ctx context.Context, db *pgxpool.Pool, frontendOrigin string) (http.Handler, error) {

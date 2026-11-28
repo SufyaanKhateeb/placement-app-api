@@ -3,6 +3,7 @@ package access
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -31,13 +32,15 @@ func (s Store) RegisterRoutes(mux *http.ServeMux, auth types.AuthService, origin
 	mux.Handle("GET "+path+"/accounts/{kind}/{id}/roles", requireManager(h.accountRoles))
 	mux.Handle("GET "+path+"/audit", requireManager(h.audit))
 	mux.Handle("POST "+path+"/roles", requireManager(h.write(h.saveRole)))
+	mux.Handle("GET "+path+"/roles/{role}", requireManager(h.getRole))
 	mux.Handle("PUT "+path+"/roles/{role}", requireManager(h.write(h.saveRole)))
 	mux.Handle("PUT "+path+"/accounts/{kind}/{id}/roles/{role}", requireManager(h.write(h.assignment)))
 	mux.Handle("DELETE "+path+"/accounts/{kind}/{id}/roles/{role}", requireManager(h.write(h.assignment)))
 	mux.Handle("DELETE "+path+"/accounts/user/{id}/approvals/{submission}", requireManager(h.write(h.revokeApproval)))
 	mux.Handle("PUT "+path+"/legacy-approval-roles/{key}", requireManager(h.write(h.mapLegacyRole)))
 	mux.Handle("POST "+path+"/invitations", middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, InviteAdmins)(h.write(h.inviteAdmin)))
-	mux.Handle("POST "+path+"/accounts/user/{id}/promote", middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, PromoteAdmins)(h.write(h.promoteAdmin)))
+	mux.Handle("POST "+path+"/accounts/user/{id}/promote", middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, PromoteAdmins)(h.write(h.promoteAdmin(false))))
+	mux.Handle("PATCH "+path+"/accounts/user/{id}", middlewares.Authenticate(auth, s.Resolve, types.RoleAdmin, PromoteAdmins)(h.write(h.promoteAdmin(true))))
 }
 
 func (h handler) catalog(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +81,15 @@ func (h handler) audit(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, value, err)
 }
 
+func (h handler) getRole(w http.ResponseWriter, r *http.Request) {
+	id, ok := readID(w, r, "role")
+	if !ok {
+		return
+	}
+	value, err := h.store.getRole(r.Context(), id)
+	respond(w, http.StatusOK, value, err)
+}
+
 func (h handler) saveRole(w http.ResponseWriter, r *http.Request) {
 	var id int64
 	status := http.StatusCreated
@@ -99,6 +111,9 @@ func (h handler) saveRole(w http.ResponseWriter, r *http.Request) {
 		id, err = changeRole(r.Context(), tx, actor, id, input)
 		return err
 	})
+	if err == nil && status == http.StatusCreated {
+		w.Header().Set("Location", fmt.Sprintf("/api/v1/admin/access/roles/%d", id))
+	}
 	respond(w, status, map[string]int64{"id": id}, err)
 }
 

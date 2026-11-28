@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -31,8 +32,12 @@ func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthSer
 	submitter := middlewares.Authenticate(sessions, accessStore.Resolve, types.RoleUser, access.OwnSubmissions)
 
 	mux.Handle("GET /api/v1/forms/{id}/submission", submitter(h.getMySubmission))
-	mux.Handle("POST /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(false))))
-	mux.Handle("PUT /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(true))))
+	mux.Handle("POST /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(false, false))))
+	mux.Handle("PUT /api/v1/forms/{id}/submission", submitter(h.fromFrontend(h.submitAnswers(true, false))))
+
+	mux.Handle("POST /api/v1/forms/{id}/submissions", submitter(h.fromFrontend(h.submitAnswers(false, true))))
+	mux.Handle("GET /api/v1/forms/{id}/submissions/mine", submitter(h.getMySubmission))
+	mux.Handle("PUT /api/v1/forms/{id}/submissions/mine", submitter(h.fromFrontend(h.submitAnswers(true, false))))
 
 	mux.Handle("GET /api/v1/forms", user(h.list(false)))
 	mux.Handle("GET /api/v1/forms/{id}", user(h.getPublished))
@@ -40,8 +45,16 @@ func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthSer
 	mux.Handle("GET /api/v1/admin/forms/{id}", admin(h.get))
 	mux.Handle("POST /api/v1/admin/forms", admin(h.fromFrontend(h.create)))
 	mux.Handle("PUT /api/v1/admin/forms/{id}/draft", admin(h.fromFrontend(h.save)))
-	mux.Handle("POST /api/v1/admin/forms/{id}/draft", admin(h.fromFrontend(h.revisionAction(h.store.editPublished))))
-	mux.Handle("POST /api/v1/admin/forms/{id}/publish", admin(h.fromFrontend(h.revisionAction(h.store.publish))))
+	mux.Handle("POST /api/v1/admin/forms/{id}/draft", admin(h.fromFrontend(h.revisionAction(h.store.editPublished, nil))))
+	mux.Handle("POST /api/v1/admin/forms/{id}/publish", admin(h.fromFrontend(h.revisionAction(h.store.publish, nil))))
+	mux.Handle("GET /api/v1/admin/forms/{id}/draft", admin(h.getDraft))
+	mux.Handle("POST /api/v1/admin/forms/{id}/drafts", admin(h.fromFrontend(h.revisionAction(h.store.editPublished, func(form Form) string {
+		return adminFormLocation(form.ID) + "/draft"
+	}))))
+	mux.Handle("GET /api/v1/admin/forms/{id}/versions/{version}", admin(h.getVersion))
+	mux.Handle("POST /api/v1/admin/forms/{id}/versions", admin(h.fromFrontend(h.revisionAction(h.store.publish, func(form Form) string {
+		return fmt.Sprintf("%s/versions/%d", adminFormLocation(form.ID), form.PublishedVersion)
+	}))))
 	mux.Handle("POST /api/v1/admin/forms/preview", admin(h.fromFrontend(h.preview)))
 	mux.Handle("GET /api/v1/admin/forms/approval-roles", admin(func(w http.ResponseWriter, r *http.Request) {
 		roles, err := accessStore.ApprovalRoles(r.Context())
@@ -50,6 +63,7 @@ func RegisterRoutes(mux *http.ServeMux, db *pgxpool.Pool, sessions types.AuthSer
 	mux.Handle("GET /api/v1/admin/submissions", reviewer(h.listReviews))
 	mux.Handle("GET /api/v1/admin/submissions/{id}", reviewer(h.getReview))
 	mux.Handle("PUT /api/v1/admin/submissions/{id}/review", reviewer(h.fromFrontend(h.reviewSubmission)))
+	mux.Handle("PATCH /api/v1/admin/submissions/{id}", reviewer(h.fromFrontend(h.reviewSubmission)))
 }
 
 func (h handler) fromFrontend(next http.HandlerFunc) http.HandlerFunc {
@@ -79,6 +93,32 @@ func (h handler) get(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, http.StatusOK, form, err)
 }
 
+func (h handler) getDraft(w http.ResponseWriter, r *http.Request) {
+	id, ok := readID(w, r)
+	if !ok {
+		return
+	}
+	form, err := h.store.get(r.Context(), id)
+	if err == nil && form.Draft == nil {
+		err = errNotFound
+	}
+	writeResult(w, http.StatusOK, map[string]any{"revision": form.Revision, "draft": form.Draft}, err)
+}
+
+func (h handler) getVersion(w http.ResponseWriter, r *http.Request) {
+	id, ok := readID(w, r)
+	if !ok {
+		return
+	}
+	version, err := strconv.ParseInt(r.PathValue("version"), 10, 32)
+	if err != nil || version <= 0 {
+		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid form version"))
+		return
+	}
+	form, err := h.store.getVersion(r.Context(), id, int(version))
+	writeResult(w, http.StatusOK, form, err)
+}
+
 func (h handler) getPublished(w http.ResponseWriter, r *http.Request) {
 	id, ok := readID(w, r)
 	if !ok {
@@ -97,6 +137,10 @@ func publishedAccessAccount(ctx context.Context) *int {
 	return nil
 }
 
+func adminFormLocation(id int64) string {
+	return fmt.Sprintf("/api/v1/admin/forms/%d", id)
+}
+
 func (h handler) create(w http.ResponseWriter, r *http.Request) {
 	// Require JSON so a browser form on another site cannot create a draft.
 	var input struct{}
@@ -104,6 +148,9 @@ func (h handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form, err := h.store.create(r.Context())
+	if err == nil {
+		w.Header().Set("Location", adminFormLocation(form.ID))
+	}
 	writeResult(w, http.StatusCreated, form, err)
 }
 
@@ -127,7 +174,7 @@ func (h handler) save(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, http.StatusOK, map[string]any{"revision": revision, "draft": input.Draft}, err)
 }
 
-func (h handler) revisionAction(action func(context.Context, int64, int64) (Form, error)) http.HandlerFunc {
+func (h handler) revisionAction(action func(context.Context, int64, int64) (Form, error), location func(Form) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := readID(w, r)
 		if !ok {
@@ -140,7 +187,12 @@ func (h handler) revisionAction(action func(context.Context, int64, int64) (Form
 			return
 		}
 		form, err := action(r.Context(), id, input.Revision)
-		writeResult(w, http.StatusOK, form, err)
+		status := http.StatusOK
+		if err == nil && location != nil {
+			w.Header().Set("Location", location(form))
+			status = http.StatusCreated
+		}
+		writeResult(w, status, form, err)
 	}
 }
 
@@ -200,7 +252,7 @@ func writeResult(w http.ResponseWriter, status int, result any, err error) {
 	case err == nil:
 		utils.WriteJson(w, status, result)
 	case errors.Is(err, errConflict):
-		utils.WriteJsonError(w, http.StatusConflict, err)
+		utils.WriteAPIError(w, http.StatusConflict, "draft_changed", err, nil)
 	case errors.Is(err, errNotFound):
 		utils.WriteJsonError(w, http.StatusNotFound, err)
 	case errors.Is(err, errEmptyForm), errors.Is(err, errInvalidFollowUp), errors.Is(err, errInvalidApprovalRole):

@@ -87,6 +87,14 @@ func (s store) get(ctx context.Context, id int64) (Form, error) {
 	return form, replaceNoRows(err, errNotFound)
 }
 
+func (s store) getVersion(ctx context.Context, id int64, version int) (PublishedForm, error) {
+	var form PublishedForm
+	err := s.db.QueryRow(ctx, `
+		SELECT form_id, version, definition FROM form_versions WHERE form_id = $1 AND version = $2
+	`, id, version).Scan(&form.ID, &form.Version, &form.Definition)
+	return form, replaceNoRows(err, errNotFound)
+}
+
 func readPublished(ctx context.Context, db formRowReader, id int64, userID *int, browseRestricted bool) (PublishedForm, error) {
 	var form PublishedForm
 	err := db.QueryRow(ctx, `

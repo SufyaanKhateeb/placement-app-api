@@ -1,6 +1,6 @@
 # Placement App API
 
-The API uses Go 1.23.1 or later and managed PostgreSQL on Neon. The frontend uses the existing `/api/v1` routes.
+The API uses Go 1.23.1 or later and managed PostgreSQL on Neon. The frontend uses `/api/v1`. See the [API contract and migration guide](docs/api-v1.md) for the canonical routes and the legacy comparison.
 
 ## Run locally with a separate database
 

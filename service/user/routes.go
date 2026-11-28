@@ -21,6 +21,7 @@ type Handler struct {
 	Store           *Store
 	EmailCodeMailer func(context.Context, string, string) error
 	frontendOrigin  string
+	prefix          string
 }
 
 func NewHandler(users types.UserService, auth types.AuthService) *Handler {
@@ -28,7 +29,10 @@ func NewHandler(users types.UserService, auth types.AuthService) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string, resolve middlewares.ResolvePermissions, frontendOrigin string) {
+	h.prefix, h.frontendOrigin = prefix, frontendOrigin
 	mux.HandleFunc("POST "+prefix+"/login", h.login(types.RoleUser))
+	mux.HandleFunc("POST "+prefix+"/auth/sessions", h.login(""))
+	mux.HandleFunc("POST "+prefix+"/users", h.register)
 	mux.HandleFunc("POST "+prefix+"/login-admin", h.login(types.RoleAdmin))
 	mux.HandleFunc("POST "+prefix+"/register", h.register)
 
@@ -37,12 +41,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, prefix string, resolve midd
 		utils.WriteJsonError(w, http.StatusGone, errors.New("use an admin invitation or promote an existing account"))
 	})
 	if h.Store != nil {
-		h.frontendOrigin = frontendOrigin
 		h.registerInvitationRoutes(mux, prefix, authenticate, frontendOrigin)
 		h.registerEmailVerificationRoutes(mux, prefix, frontendOrigin)
 	}
 	mux.Handle("POST "+prefix+"/refresh", authenticate(h.profile))
 	mux.Handle("POST "+prefix+"/logout", authenticate(h.logout))
+	mux.Handle("GET "+prefix+"/users/me", authenticate(h.profile))
+	mux.Handle("POST "+prefix+"/auth/sessions/current/renewals", authenticate(h.profile))
+	mux.Handle("DELETE "+prefix+"/auth/sessions/current", authenticate(h.logout))
 	mux.Handle("GET "+prefix+"/user", authenticate(h.profile))
 }
 
@@ -81,26 +87,49 @@ func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJson(w, http.StatusOK, profile)
 }
 
-func (h *Handler) logout(w http.ResponseWriter, _ *http.Request) {
+func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
+	if origin := r.Header.Get("Origin"); r.Method == http.MethodDelete && origin != "" && origin != h.frontendOrigin {
+		utils.WriteJsonError(w, http.StatusForbidden, errors.New("untrusted request origin"))
+		return
+	}
 	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", "", 0)
 	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", "", 0)
+	if r.Method == http.MethodDelete {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	utils.WriteJson(w, http.StatusAccepted, nil)
 }
 
 func (h *Handler) login(role string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var payload types.LoginUserPayload
-		if !readPayload(w, r, &payload) {
+		canonical := role == ""
+		mode, success := role, http.StatusOK
+		if canonical {
+			var input struct {
+				types.LoginUserPayload
+				Mode string `json:"mode"`
+			}
+			if !readPayload(w, r, &input) {
+				return
+			}
+			payload, mode, success = input.LoginUserPayload, input.Mode, http.StatusNoContent
+			if mode != types.RoleUser && mode != types.RoleAdmin {
+				utils.WriteJsonError(w, http.StatusBadRequest, errors.New("sign-in mode must be user or admin"))
+				return
+			}
+		} else if !readPayload(w, r, &payload) {
 			return
 		}
 		if !validEmail(payload.Email) || payload.Password == "" {
 			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("a valid email and password are required"))
 			return
 		}
-		if role == types.RoleAdmin {
+		if mode == types.RoleAdmin {
 			user, err := h.UserService.LoginAdminUser(r.Context(), &payload)
 			if err == nil {
-				h.startSession(w, http.StatusOK, types.TokenInput{Id: user.Id, Type: types.RoleAdmin})
+				h.startSession(w, success, types.TokenInput{Id: user.Id, Type: types.RoleAdmin})
 				return
 			}
 			if h.Store != nil {
@@ -112,17 +141,17 @@ func (h *Handler) login(role string) http.HandlerFunc {
 						return
 					}
 					if isAdmin {
-						h.startSession(w, http.StatusOK, types.TokenInput{Id: member.Id, Type: types.RoleUser, AdminMode: true})
+						h.startSession(w, success, types.TokenInput{Id: member.Id, Type: types.RoleUser, AdminMode: true})
 						return
 					}
 				}
 			}
-			utils.WriteJsonError(w, err.StatusCode, err.Err)
+			writeLoginError(w, err.StatusCode, err.Err, canonical)
 			return
 		}
 		user, err := h.UserService.LoginUser(r.Context(), &payload)
 		if err != nil {
-			utils.WriteJsonError(w, err.StatusCode, err.Err)
+			writeLoginError(w, err.StatusCode, err.Err, canonical)
 			return
 		}
 		if h.Store != nil {
@@ -132,12 +161,23 @@ func (h *Handler) login(role string) http.HandlerFunc {
 				return
 			}
 			if !verified {
-				h.startEmailVerification(w, r, emailChallenge{recipient: user.Email, userID: &user.Id, passwordHash: user.Password})
+				h.startEmailVerification(w, r, emailChallenge{recipient: user.Email, userID: &user.Id, passwordHash: user.Password}, canonical)
 				return
 			}
 		}
-		h.startSession(w, http.StatusOK, types.TokenInput{Id: user.Id, Type: types.RoleUser})
+		h.startSession(w, success, types.TokenInput{Id: user.Id, Type: types.RoleUser})
 	}
+}
+
+func writeLoginError(w http.ResponseWriter, status int, err error, canonical bool) {
+	if status == http.StatusBadRequest {
+		if canonical {
+			status = http.StatusUnauthorized
+		}
+		utils.WriteAPIError(w, status, "invalid_credentials", err, nil)
+		return
+	}
+	utils.WriteJsonError(w, status, err)
 }
 
 var passwordLetter = regexp.MustCompile("[a-zA-Z]")
@@ -158,7 +198,7 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		h.startEmailVerification(w, r, emailChallenge{
 			recipient: payload.Email, firstName: payload.FirstName,
 			lastName: payload.LastName, passwordHash: hash,
-		})
+		}, r.URL.Path == h.prefix+"/users")
 		return
 	}
 	user, err := h.UserService.RegisterUser(r.Context(), &payload)
@@ -205,5 +245,12 @@ func (h *Handler) startSession(w http.ResponseWriter, status int, account types.
 	}
 	utils.WriteJwtToCookie(w, "ACCESS_TOKEN", access, time.Duration(config.Env.JWTExpirationTime)*time.Second)
 	utils.WriteJwtToCookie(w, "REFRESH_TOKEN", refresh, 30*24*time.Hour)
+	if status == http.StatusNoContent {
+		w.WriteHeader(status)
+		return
+	}
+	if status == http.StatusCreated {
+		w.Header().Set("Location", h.prefix+"/users/me")
+	}
 	utils.WriteJson(w, status, nil)
 }

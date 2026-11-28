@@ -26,7 +26,7 @@ func TestPasswordEmailVerificationAndGoogleLinkPostgres(t *testing.T) {
 	if database == "" {
 		t.Skip("requires a migrated test database in PLACEMENT_TEST_DATABASE_URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, database)
 	if err != nil {
@@ -116,9 +116,14 @@ func TestPasswordEmailVerificationAndGoogleLinkPostgres(t *testing.T) {
 		if err := json.Unmarshal(profile.Body.Bytes(), &data); err != nil || data.Id <= 0 || data.Role != types.RoleUser {
 			t.Fatalf("expected a regular session: %s (%v)", profile.Body, err)
 		}
+		canonical := request("GET", "/users/me", nil, access, http.StatusOK)
+		if canonical.Body.String() != profile.Body.String() {
+			t.Fatal("legacy and canonical profiles differ")
+		}
 		return data.Id
 	}
 	const confirm = "/auth/email-verification/confirm"
+	const confirmations = "/auth/email-verifications/current/confirmations"
 	const resend = "/auth/email-verification/resend"
 	confirmWith := func(grant *http.Cookie, code string, status int) *httptest.ResponseRecorder {
 		t.Helper()
@@ -135,7 +140,7 @@ func TestPasswordEmailVerificationAndGoogleLinkPostgres(t *testing.T) {
 
 	newEmail := prefix + "new@gmail.com"
 	registration := map[string]string{"firstName": "New", "lastName": "Member", "email": newEmail, "password": password}
-	grant := pending(request("POST", "/register", registration, nil, http.StatusAccepted))
+	grant := pending(request("POST", "/users", registration, nil, http.StatusAccepted))
 	code := mail[newEmail]
 	if len(code) != 6 {
 		t.Fatal("registration should send a six-digit code to the requested address")
@@ -144,11 +149,36 @@ func TestPasswordEmailVerificationAndGoogleLinkPostgres(t *testing.T) {
 		t.Fatal("unverified registration created a password account")
 	}
 	confirmWith(nil, code, http.StatusGone)
-	newID := profileID(confirmWith(grant, code, http.StatusOK))
+	created := request("POST", confirmations, map[string]string{"code": code}, grant, http.StatusCreated)
+	if got := created.Header().Get("Location"); got != "/api/v1/users/me" {
+		t.Fatalf("unexpected user location: %q", got)
+	}
+	newID := profileID(created)
 	confirmWith(grant, code, http.StatusGone)
 	if got := profileID(login(newEmail, password, http.StatusOK)); got != newID {
 		t.Fatalf("verified registration changed ID: got %d, want %d", got, newID)
 	}
+	session := map[string]string{"email": newEmail, "password": password, "mode": "user"}
+	signedIn := request("POST", "/auth/sessions", session, nil, http.StatusNoContent)
+	if signedIn.Body.Len() != 0 || profileID(signedIn) != newID {
+		t.Fatal("canonical sign-in should issue the original session with an empty body")
+	}
+	refresh := cookie(signedIn, "REFRESH_TOKEN")
+	renewed := request("POST", "/auth/sessions/current/renewals", nil, refresh, http.StatusOK)
+	if cookie(renewed, "ACCESS_TOKEN") == nil {
+		t.Fatal("canonical renewal did not issue an access cookie")
+	}
+	signedOut := request("DELETE", "/auth/sessions/current", nil, cookie(signedIn, "ACCESS_TOKEN"), http.StatusNoContent)
+	if signedOut.Body.Len() != 0 {
+		t.Fatal("canonical sign-out should return an empty response")
+	}
+	for _, name := range []string{"ACCESS_TOKEN", "REFRESH_TOKEN"} {
+		if cleared := cookie(signedOut, name); cleared == nil || cleared.MaxAge != -1 {
+			t.Fatalf("canonical sign-out did not clear %s", name)
+		}
+	}
+	session["password"] = "incorrect"
+	checkErrorCode(t, request("POST", "/auth/sessions", session, nil, http.StatusUnauthorized), "invalid_credentials")
 	for range 2 {
 		linked, err := store.ResolveGoogleAccount(ctx, google(newEmail, "new"))
 		if err != nil || linked.Id != newID || linked.IsAdmin() {
@@ -195,7 +225,7 @@ func TestPasswordEmailVerificationAndGoogleLinkPostgres(t *testing.T) {
 	exec(`UPDATE email_verifications SET sent_at = ARRAY(SELECT sent - interval '2 minutes' FROM unnest(sent_at) AS sent) WHERE email = $1`, existing)
 	request("POST", resend, nil, grant, http.StatusTooManyRequests)
 	exec("UPDATE email_verifications SET failed_at = '{}' WHERE email = $1", existing)
-	if got := profileID(confirmWith(grant, mail[existing], http.StatusOK)); got != existingID {
+	if got := profileID(request("POST", confirmations, map[string]string{"code": mail[existing]}, grant, http.StatusNoContent)); got != existingID {
 		t.Fatalf("verified existing login changed ID: got %d, want %d", got, existingID)
 	}
 	if linked, err := store.ResolveGoogleAccount(ctx, existingGoogle); err != nil || linked.Id != existingID {

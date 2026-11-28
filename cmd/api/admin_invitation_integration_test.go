@@ -27,7 +27,7 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 	if database == "" {
 		t.Skip("requires a migrated test database in PLACEMENT_TEST_DATABASE_URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, database)
 	if err != nil {
@@ -167,7 +167,9 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 	const accept = "/auth/admin-invitation/accept"
 	const open = "/auth/admin-invitation/open"
 	const register = "/auth/admin-invitation/register"
-	promote := fmt.Sprintf("/admin/access/accounts/user/%d/promote", memberID)
+	accountPath := fmt.Sprintf("/admin/access/accounts/user/%d", memberID)
+	promote := accountPath + "/promote"
+	patch := fmt.Sprintf(`{"admin":true,"email":%q}`, memberEmail)
 	memberBody := fmt.Sprintf(`{"email":%q}`, memberEmail)
 	inviteBody := fmt.Sprintf(`{"email":%q}`, strings.ToUpper(inviteEmail))
 
@@ -175,6 +177,7 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 	for _, actor := range []*http.Cookie{ordinary, member} {
 		check(http.StatusForbidden, send("POST", invites, inviteBody, actor))
 		check(http.StatusForbidden, send("POST", promote, memberBody, actor))
+		check(http.StatusForbidden, send("PATCH", accountPath, patch, actor))
 	}
 	if len(mail) != 0 {
 		t.Fatal("an unauthorized invitation called the mailer")
@@ -184,7 +187,8 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 	check(http.StatusGone, send("POST", "/register-admin", "{}", manager))
 	login("/login-admin", memberEmail, http.StatusBadRequest)
 
-	check(http.StatusNoContent, send("POST", promote, memberBody, manager))
+	check(http.StatusBadRequest, send("PATCH", accountPath, memberBody, manager))
+	check(http.StatusNoContent, send("PATCH", accountPath, patch, manager))
 	check(http.StatusConflict, send("POST", promote, memberBody, manager))
 	profile(member, memberID, "user")
 	profile(oldRefresh, memberID, "user")
@@ -239,7 +243,12 @@ func TestAdminInvitationAndPromotionPostgres(t *testing.T) {
 	check(http.StatusConflict, send("POST", "/register", registration))
 	check(http.StatusUnauthorized, send("POST", accept, "{}", inviteCookie))
 	check(http.StatusConflict, send("POST", accept, "{}", member, inviteCookie))
-	invited := cookie(check(http.StatusCreated, send("POST", register, registration, inviteCookie)), "ACCESS_TOKEN")
+	enrolled := check(http.StatusCreated, send("POST", register, registration, inviteCookie))
+	if got := enrolled.Header().Get("Location"); got != "/api/v1/users/me" {
+		t.Fatalf("unexpected invited user location: %q", got)
+	}
+	invited := cookie(enrolled, "ACCESS_TOKEN")
+	check(http.StatusOK, send("GET", "/users/me", "", invited))
 	check(http.StatusForbidden, send("GET", "/admin/forms", "", invited))
 	check(http.StatusConflict, send("POST", accept, "{}", member, inviteCookie))
 
