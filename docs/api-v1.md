@@ -42,7 +42,7 @@ The caller must use the same authenticated context when following caller-scoped 
 | `GET /forms`, `GET /forms/{id}` | Browse Forms. `200` list or published definition. Restricted and follow-up form access is checked on read. |
 | `GET /admin/forms`, `GET /admin/forms/{id}`, `GET /admin/forms/approval-roles` | Manage Forms. `200` list, editor representation, or eligible role choices. |
 | `POST /admin/forms/preview` | Manage Forms. `200` with `{valid,errors}` for a valid preview request, including when the sample answers fail validation. |
-| `GET /admin/submissions?before=…`, `GET /admin/submissions/{id}` | Review Submissions. `200` with `{items,nextBefore?}` or the review representation. |
+| `GET /admin/submissions`, `GET /admin/submissions/{id}` | Review Submissions. `200` with `{items,nextBefore?}` or the review representation. The list accepts `q` (case-insensitive substring in form title, submitter name, or email), `status` (`submitted`, `changes_requested`, or `approved`), and the `before` cursor. Keep the same filters when requesting the next page. |
 
 ## Errors and migration
 

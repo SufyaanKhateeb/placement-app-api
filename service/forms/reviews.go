@@ -47,8 +47,21 @@ type reviewInput struct {
 }
 
 func (h handler) listReviews(w http.ResponseWriter, r *http.Request) {
+	params := r.URL.Query()
+	search := strings.TrimSpace(params.Get("q"))
+	if utf8.RuneCountInString(search) > 256 || strings.ContainsRune(search, 0) {
+		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid submission search"))
+		return
+	}
+	status := params.Get("status")
+	switch status {
+	case "", "submitted", "changes_requested", "approved":
+	default:
+		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid submission status"))
+		return
+	}
 	var before *int64
-	if raw := r.URL.Query().Get("before"); raw != "" {
+	if raw := params.Get("before"); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || value <= 0 {
 			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid submission cursor"))
@@ -56,7 +69,7 @@ func (h handler) listReviews(w http.ResponseWriter, r *http.Request) {
 		}
 		before = &value
 	}
-	page, err := h.store.listReviews(r.Context(), before)
+	page, err := h.store.listReviews(r.Context(), before, search, status)
 	writeResult(w, http.StatusOK, page, err)
 }
 
@@ -178,7 +191,7 @@ func (input reviewInput) validate(definition Definition) (map[string]any, error)
 	return changes, nil
 }
 
-func (s store) listReviews(ctx context.Context, before *int64) (reviewPage, error) {
+func (s store) listReviews(ctx context.Context, before *int64, search, status string) (reviewPage, error) {
 	page := reviewPage{Items: make([]reviewSummary, 0)}
 	rows, err := s.db.Query(ctx, `
         SELECT s.id, v.definition->>'title', s.form_version, s.status, s.submitted_at,
@@ -187,8 +200,13 @@ func (s store) listReviews(ctx context.Context, before *int64) (reviewPage, erro
         JOIN form_versions v ON v.form_id = s.form_id AND v.version = s.form_version
         JOIN app_user u ON u.id = s.user_id
         WHERE ($1::bigint IS NULL OR s.id < $1)
-        ORDER BY s.id DESC LIMIT $2
-    `, before, reviewPageSize+1)
+          AND ($2::text = '' OR s.status = $2)
+          AND ($3::text = ''
+               OR strpos(lower(v.definition->>'title'), lower($3)) > 0
+               OR strpos(lower(concat_ws(' ', u.firstname, u.lastname)), lower($3)) > 0
+               OR strpos(lower(u.email), lower($3)) > 0)
+        ORDER BY s.id DESC LIMIT $4
+    `, before, status, search, reviewPageSize+1)
 	if err != nil {
 		return page, err
 	}
