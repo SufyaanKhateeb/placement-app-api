@@ -106,10 +106,11 @@ func TestJobPublicationPostgres(t *testing.T) {
 	exec("INSERT INTO access_assignments VALUES ('user',$1,$2)", outsider, publisherRole)
 	exec("INSERT INTO access_assignments VALUES ('user',$1,$3), ('user',$2,$3), ('user',$2,$4)",
 		roleOnly, overlap, firstRole, secondRole)
-	if err := pool.QueryRow(ctx, "INSERT INTO forms (draft) VALUES ('{}') RETURNING id").Scan(&formID); err != nil {
+	const verificationForm = `{"title":"Job fixture verification","description":"","fields":[{"id":"note","label":"Note","type":"text","required":false}]}`
+	if err := pool.QueryRow(ctx, "INSERT INTO forms (draft) VALUES ($1::jsonb) RETURNING id", verificationForm).Scan(&formID); err != nil {
 		t.Fatal(err)
 	}
-	exec("INSERT INTO form_versions (form_id,version,definition) VALUES ($1,1,'{}')", formID)
+	exec("INSERT INTO form_versions (form_id,version,definition) VALUES ($1,1,$2::jsonb)", formID, verificationForm)
 	if err := pool.QueryRow(ctx, `INSERT INTO form_submissions (form_id,user_id,form_version,answers,status)
 		VALUES ($1,$2,1,'{}','approved') RETURNING id`, formID, approval).Scan(&submissionID); err != nil {
 		t.Fatal(err)
@@ -180,9 +181,11 @@ func TestJobPublicationPostgres(t *testing.T) {
 	}
 	first := readJob(<-results, http.StatusOK)
 	second := readJob(<-results, http.StatusOK)
+	// Other integration packages can have verified fixtures in the same database.
 	if first.PublishedAt == nil || second.PublishedAt == nil || !first.PublishedAt.Equal(*second.PublishedAt) ||
 		first.PublishedBy == nil || first.PublishedBy.AccountID != publisher ||
-		first.Audience == nil || len(first.Audience.RoleIDs) != 2 || first.RecipientCount != 4 {
+		first.Audience == nil || len(first.Audience.RoleIDs) != 2 || first.RecipientCount < 4 ||
+		first.RecipientCount != second.RecipientCount {
 		t.Fatalf("unexpected publication receipt: %+v", first)
 	}
 	check(request(http.MethodPut, publication, "publisher", `{"revision":2,"audience":{"verifiedUsers":true}}`), http.StatusConflict)
@@ -207,10 +210,11 @@ func TestJobPublicationPostgres(t *testing.T) {
 	}
 	exec("INSERT INTO access_assignments VALUES ('user',$1,$2)", outsider, firstRole)
 	check(request(http.MethodGet, userDetail, "outsider", ""), http.StatusNotFound)
-	var eventCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM access_audit
-		WHERE action='job.published' AND detail->>'jobId'=$1`, fmt.Sprint(job.ID)).Scan(&eventCount); err != nil || eventCount != 1 {
-		t.Fatalf("expected one publication audit event, got %d: %v", eventCount, err)
+	var eventCount, matchingCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*), count(*) FILTER (WHERE detail->>'recipientCount'=$2)
+		FROM access_audit WHERE action='job.published' AND detail->>'jobId'=$1`,
+		fmt.Sprint(job.ID), fmt.Sprint(first.RecipientCount)).Scan(&eventCount, &matchingCount); err != nil || eventCount != 1 || matchingCount != 1 {
+		t.Fatalf("expected one matching publication audit event, got %d of %d: %v", matchingCount, eventCount, err)
 	}
 	for _, tc := range []struct {
 		audienceJSON      string
