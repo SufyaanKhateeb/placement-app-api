@@ -21,7 +21,7 @@ var (
 	errAdminRequired  = errors.New("Role Manager requires an admin account")
 	errLastManager    = errors.New("assign another Role Manager before revoking this assignment")
 	errMappingExists  = errors.New("this legacy approval key is already mapped")
-	errDenied         = errors.New("insufficient permissions")
+	ErrDenied         = errors.New("insufficient permissions")
 	validKey          = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
 
@@ -199,7 +199,7 @@ func Audit(ctx context.Context, tx pgx.Tx, actor types.TokenInput, action string
 }
 
 func (s Store) change(ctx context.Context, actor types.TokenInput, fn func(pgx.Tx) error) error {
-	return s.changeWithPermission(ctx, actor, ManageRoles, fn)
+	return s.ChangeWithPermission(ctx, actor, ManageRoles, fn)
 }
 
 func lockManagement(ctx context.Context, tx pgx.Tx) error {
@@ -208,7 +208,8 @@ func lockManagement(ctx context.Context, tx pgx.Tx) error {
 	return err
 }
 
-func (s Store) changeWithPermission(ctx context.Context, actor types.TokenInput, permission string, fn func(pgx.Tx) error) error {
+// ChangeWithPermission checks administrative access within the transaction that performs the change.
+func (s Store) ChangeWithPermission(ctx context.Context, actor types.TokenInput, permission string, fn func(pgx.Tx) error) error {
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return err
@@ -219,13 +220,13 @@ func (s Store) changeWithPermission(ctx context.Context, actor types.TokenInput,
 	}
 	permissions, err := resolvePermissions(ctx, tx, actor)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return errDenied
+		return ErrDenied
 	}
 	if err != nil {
 		return err
 	}
 	if !actor.IsAdmin() || !slices.Contains(permissions, permission) {
-		return errDenied
+		return ErrDenied
 	}
 	if err := fn(tx); err != nil {
 		return err

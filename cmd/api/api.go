@@ -11,6 +11,7 @@ import (
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/access"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/auth"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/forms"
+	"github.com/SufyaanKhateeb/college-placement-app-api/service/jobs"
 	"github.com/SufyaanKhateeb/college-placement-app-api/service/user"
 	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/go-chi/cors"
@@ -24,6 +25,7 @@ func newHandler(db *pgxpool.Pool, frontendOrigin string, google *auth.GoogleSign
 	userStore := user.NewStore(db)
 	userService := user.NewUserService(userStore)
 	authService := &auth.AuthService{}
+	jobs.RegisterRoutes(mux, db, authService, frontendOrigin)
 	accessStore := access.Store{DB: db}
 	users := user.NewHandler(userService, authService)
 	users.Store = userStore
