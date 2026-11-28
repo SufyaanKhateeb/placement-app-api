@@ -63,7 +63,7 @@ func (s Store) createInvitation(ctx context.Context, actor types.TokenInput, ema
 	}
 	token := base64.RawURLEncoding.EncodeToString(secret[:])
 	hash := sha256.Sum256(secret[:])
-	err := s.changeWithPermission(ctx, actor, InviteAdmins, func(tx pgx.Tx) error {
+	err := s.ChangeWithPermission(ctx, actor, InviteAdmins, func(tx pgx.Tx) error {
 		email, err := LockAccountEmail(ctx, tx, email)
 		if err != nil {
 			return err
@@ -202,7 +202,7 @@ func (s Store) AcceptInvitation(ctx context.Context, hash []byte, recipient type
 }
 
 func (s Store) promote(ctx context.Context, actor types.TokenInput, id int, email string) error {
-	return s.changeWithPermission(ctx, actor, PromoteAdmins, func(tx pgx.Tx) error {
+	return s.ChangeWithPermission(ctx, actor, PromoteAdmins, func(tx pgx.Tx) error {
 		normalized, err := LockAccountEmail(ctx, tx, email)
 		if err != nil {
 			return err

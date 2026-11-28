@@ -222,7 +222,7 @@ func respond(w http.ResponseWriter, status int, value any, err error) {
 		utils.WriteJson(w, status, value)
 	case errors.Is(err, pgx.ErrNoRows):
 		utils.WriteJsonError(w, http.StatusNotFound, errors.New("account, role, or grant not found"))
-	case errors.Is(err, errDenied):
+	case errors.Is(err, ErrDenied):
 		utils.WriteJsonError(w, http.StatusForbidden, err)
 	case errors.Is(err, errLastManager), errors.Is(err, errMappingExists),
 		errors.Is(err, errEmailInUse), errors.Is(err, errAlreadyAdmin), errors.Is(err, errAccountChanged):

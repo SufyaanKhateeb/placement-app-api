@@ -17,6 +17,7 @@ const (
 	ManageRoles       = "roles.manage"
 	InviteAdmins      = "admins.invite"
 	PromoteAdmins     = "admins.promote"
+	PublishJobs       = "jobs.publish"
 )
 
 type Store struct {
@@ -29,6 +30,15 @@ const safeApprovalRole = `r.approval_eligible AND NOT r.builtin AND NOT EXISTS (
 	JOIN access_permissions p ON p.key = rp.permission_key
 	WHERE rp.role_id = r.id AND (NOT p.approval_safe OR p.reserved)
 )`
+
+// UserApprovalRoleGrantsSQL selects current, safe user role grants from form approvals.
+const UserApprovalRoleGrantsSQL = `
+	SELECT sub.user_id, r.id AS role_id
+	FROM form_submissions sub
+	JOIN form_verifications v ON v.submission_id = sub.id
+	LEFT JOIN access_legacy_approval_roles m ON m.legacy_key = v.role_key AND v.access_role_id IS NULL
+	JOIN access_roles r ON r.id = COALESCE(v.access_role_id, m.role_id)
+	WHERE v.access_role_revoked_at IS NULL AND ` + safeApprovalRole
 
 func (s Store) Resolve(ctx context.Context, account types.TokenInput) ([]string, error) {
 	return resolvePermissions(ctx, s.DB, account)
@@ -46,13 +56,8 @@ func resolvePermissions(ctx context.Context, db rowReader, account types.TokenIn
 				SELECT role_id FROM admin_membership_roles
 				WHERE $3 AND a.account_type = 'user' AND user_id = a.account_id
 				UNION ALL
-				SELECT r.id
-				FROM form_submissions sub
-				JOIN form_verifications v ON v.submission_id = sub.id
-				LEFT JOIN access_legacy_approval_roles m ON m.legacy_key = v.role_key AND v.access_role_id IS NULL
-				JOIN access_roles r ON r.id = COALESCE(v.access_role_id, m.role_id)
-				WHERE a.account_type = 'user' AND sub.user_id = a.account_id
-				  AND v.access_role_revoked_at IS NULL AND `+safeApprovalRole+`
+				SELECT role_id FROM (`+UserApprovalRoleGrantsSQL+`) approval
+				WHERE a.account_type = 'user' AND approval.user_id = a.account_id
 			) granted
 			JOIN access_role_permissions rp ON rp.role_id = granted.role_id
 			ORDER BY rp.permission_key

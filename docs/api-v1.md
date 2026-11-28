@@ -43,6 +43,16 @@ The caller must use the same authenticated context when following caller-scoped 
 | `GET /admin/forms`, `GET /admin/forms/{id}`, `GET /admin/forms/approval-roles` | Manage Forms. `200` list, editor representation, or eligible role choices. |
 | `POST /admin/forms/preview` | Manage Forms. `200` with `{valid,errors}` for a valid preview request, including when the sample answers fail validation. |
 | `GET /admin/submissions`, `GET /admin/submissions/{id}` | Review Submissions. `200` with `{items,nextBefore?}` or the review representation. The list accepts `q` (case-insensitive substring in form title, submitter name, or email), `status` (`submitted`, `changes_requested`, or `approved`), and the `before` cursor. Keep the same filters when requesting the next page. |
+| `GET /admin/jobs?before=…`, `GET /admin/jobs/{id}`, `GET /admin/jobs/audience-roles` | Admin session with Publish Jobs (`jobs.publish`). Returns a page of drafts and publications, one admin job representation, or available roles. |
+| `POST /admin/jobs`, `PUT /admin/jobs/{id}/draft` | Publish Jobs. Create or replace a draft. Create returns `201` with its admin `Location`. Replace also requires the current `revision` and returns `200`. |
+| `PUT /admin/jobs/{id}/publication` | Publish Jobs. Accepts `{revision,audience:{verifiedUsers,roleIds}}` and returns `200` with publication time, publisher, audience, and unique recipient count. Repeating the same publication returns the original receipt. |
+| `GET /jobs?before=…`, `GET /jobs/{id}` | User account. Only published jobs delivered to the caller are visible. The list returns `{items,nextBefore?}`. Both jobs lists order by descending ID and accept the previous page’s cursor. |
+
+### Job drafts and delivery
+
+Draft fields are `company`, `title`, `description`, `requirements`, `deadline` (an RFC 3339 timestamp), `contact`, and `applicationInstructions`. An in-progress draft may omit fields. Company, title, and description are required to publish. A stale revision, an edit to a published draft, or a changed audience on a publication retry returns `409 job_changed`.
+
+Assign Publish Jobs through Roles and access, then sign in as an admin. Publication takes a snapshot of matching regular user accounts. Verified users include existing placement-verified accounts and users with a form approval record. Role targeting uses direct user roles and active, approval-safe form grants. A combined audience includes users matching either selector. The transaction records the publication and its audit event and creates one in-app delivery per recipient.
 
 ## Errors and migration
 
