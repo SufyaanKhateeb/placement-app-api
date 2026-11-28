@@ -19,14 +19,42 @@ func ParseJson(r *http.Request, payload any) error {
 }
 
 func WriteJson(w http.ResponseWriter, status int, payload any) error {
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
 	return json.NewEncoder(w).Encode(payload)
 }
 
 func WriteJsonError(w http.ResponseWriter, status int, err error) error {
-	return WriteJson(w, status, map[string]string{"error": err.Error()})
+	code := errorCodes[status]
+	if code == "" {
+		code = "request_failed"
+	}
+	return WriteAPIError(w, status, code, err, nil)
+}
+
+var errorCodes = map[int]string{
+	http.StatusBadRequest:           "invalid_request",
+	http.StatusUnauthorized:         "authentication_required",
+	http.StatusForbidden:            "forbidden",
+	http.StatusNotFound:             "not_found",
+	http.StatusMethodNotAllowed:     "method_not_allowed",
+	http.StatusConflict:             "conflict",
+	http.StatusGone:                 "gone",
+	http.StatusUnsupportedMediaType: "unsupported_media_type",
+	http.StatusUnprocessableEntity:  "validation_failed",
+	http.StatusTooManyRequests:      "rate_limited",
+	http.StatusInternalServerError:  "internal_error",
+	http.StatusBadGateway:           "bad_gateway",
+	http.StatusServiceUnavailable:   "service_unavailable",
+}
+
+func WriteAPIError(w http.ResponseWriter, status int, code string, err error, fields map[string]string) error {
+	return WriteJson(w, status, struct {
+		Code   string            `json:"code"`
+		Error  string            `json:"error"`
+		Errors map[string]string `json:"errors,omitempty"`
+	}{Code: code, Error: err.Error(), Errors: fields})
 }
 
 func WriteJwtToCookie(w http.ResponseWriter, key string, token string, expirationTime time.Duration) {

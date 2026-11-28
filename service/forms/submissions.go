@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -50,7 +51,7 @@ func (h handler) getMySubmission(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, http.StatusOK, result, err)
 }
 
-func (h handler) submitAnswers(revision bool) http.HandlerFunc {
+func (h handler) submitAnswers(revision, includeLocation bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := readID(w, r)
 		if !ok {
@@ -73,18 +74,21 @@ func (h handler) submitAnswers(revision bool) http.HandlerFunc {
 			result, err = h.store.resubmit(r.Context(), id, user.Id, input)
 		} else {
 			result, err = h.store.submit(r.Context(), id, user.Id, input)
+			if err == nil && includeLocation {
+				w.Header().Set("Location", fmt.Sprintf("/api/v1/forms/%d/submissions/mine", id))
+			}
 		}
 
 		var invalid answerErrors
 		switch {
 		case errors.As(err, &invalid):
-			utils.WriteJson(w, http.StatusUnprocessableEntity, map[string]any{"error": invalid.Error(), "errors": invalid})
+			utils.WriteAPIError(w, http.StatusUnprocessableEntity, "invalid_answers", invalid, invalid)
 		case errors.Is(err, errAlreadySubmitted):
-			utils.WriteJson(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "already_submitted"})
+			utils.WriteAPIError(w, http.StatusConflict, "already_submitted", err, nil)
 		case errors.Is(err, errPublishedVersionChanged):
-			utils.WriteJson(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "version_changed"})
+			utils.WriteAPIError(w, http.StatusConflict, "version_changed", err, nil)
 		case errors.Is(err, errSubmissionChanged):
-			utils.WriteJson(w, http.StatusConflict, map[string]string{"error": err.Error(), "code": "submission_changed"})
+			utils.WriteAPIError(w, http.StatusConflict, "submission_changed", err, nil)
 		default:
 			writeResult(w, status, result, err)
 		}

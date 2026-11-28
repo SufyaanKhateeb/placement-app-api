@@ -44,24 +44,39 @@ func (h handler) inviteAdmin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (h handler) promoteAdmin(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 32)
-	if err != nil || id <= 0 {
-		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid account ID"))
-		return
+func (h handler) promoteAdmin(patch bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(r.PathValue("id"), 10, 32)
+		if err != nil || id <= 0 {
+			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("invalid account ID"))
+			return
+		}
+		var input struct {
+			Email string `json:"email"`
+		}
+		if patch {
+			var change struct {
+				Email string `json:"email"`
+				Admin bool   `json:"admin"`
+			}
+			if !readJSON(w, r, &change) {
+				return
+			}
+			if !change.Admin {
+				utils.WriteJsonError(w, http.StatusBadRequest, errors.New("admin must be true to promote an account"))
+				return
+			}
+			input.Email = change.Email
+		} else if !readJSON(w, r, &input) {
+			return
+		}
+		if !ValidInvitationEmail(input.Email) {
+			utils.WriteJsonError(w, http.StatusBadRequest, errors.New("confirm the selected account email"))
+			return
+		}
+		actor, _ := middlewares.Session(r.Context())
+		respond(w, http.StatusNoContent, nil, h.store.promote(r.Context(), actor, int(id), input.Email))
 	}
-	var input struct {
-		Email string `json:"email"`
-	}
-	if !readJSON(w, r, &input) {
-		return
-	}
-	if !ValidInvitationEmail(input.Email) {
-		utils.WriteJsonError(w, http.StatusBadRequest, errors.New("confirm the selected account email"))
-		return
-	}
-	actor, _ := middlewares.Session(r.Context())
-	respond(w, http.StatusNoContent, nil, h.store.promote(r.Context(), actor, int(id), input.Email))
 }
 
 func ValidInvitationEmail(email string) bool {

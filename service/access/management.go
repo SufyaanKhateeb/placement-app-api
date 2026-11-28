@@ -83,20 +83,30 @@ type catalog struct {
 	LegacyKeys  []legacyKey  `json:"legacyKeys"`
 }
 
+const roleSelect = `
+	SELECT id, key, name, builtin, approval_eligible,
+		ARRAY(SELECT permission_key FROM access_role_permissions WHERE role_id = r.id ORDER BY permission_key)
+	FROM access_roles r
+`
+
+func scanRole(row pgx.Row) (role, error) {
+	var r role
+	err := row.Scan(&r.ID, &r.Key, &r.Name, &r.Builtin, &r.ApprovalEligible, &r.Permissions)
+	return r, err
+}
+
+func (s Store) getRole(ctx context.Context, id int64) (role, error) {
+	return scanRole(s.DB.QueryRow(ctx, roleSelect+" WHERE r.id = $1", id))
+}
+
 func (s Store) catalog(ctx context.Context) (catalog, error) {
-	roles, err := s.DB.Query(ctx, `
-		SELECT id, key, name, builtin, approval_eligible,
-			ARRAY(SELECT permission_key FROM access_role_permissions WHERE role_id = r.id ORDER BY permission_key)
-		FROM access_roles r ORDER BY builtin DESC, lower(name), id
-	`)
+	roles, err := s.DB.Query(ctx, roleSelect+" ORDER BY builtin DESC, lower(name), id")
 	if err != nil {
 		return catalog{}, err
 	}
 	var result catalog
 	result.Roles, err = pgx.CollectRows(roles, func(row pgx.CollectableRow) (role, error) {
-		var r role
-		err := row.Scan(&r.ID, &r.Key, &r.Name, &r.Builtin, &r.ApprovalEligible, &r.Permissions)
-		return r, err
+		return scanRole(row)
 	})
 	if err != nil {
 		return result, err

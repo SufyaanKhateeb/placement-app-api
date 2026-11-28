@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	server "github.com/SufyaanKhateeb/college-placement-app-api/cmd/api"
 	"github.com/SufyaanKhateeb/college-placement-app-api/config"
+	"github.com/SufyaanKhateeb/college-placement-app-api/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,7 +37,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if initErr != nil {
-		http.Error(w, "API unavailable", http.StatusServiceUnavailable)
+		utils.WriteJsonError(w, http.StatusServiceUnavailable, errors.New("API unavailable"))
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")

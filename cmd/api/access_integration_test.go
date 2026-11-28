@@ -23,7 +23,7 @@ func TestRoleManagementPostgres(t *testing.T) {
 	if database == "" {
 		t.Skip("requires a migrated test database in PLACEMENT_TEST_DATABASE_URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	pool, err := pgxpool.New(ctx, database)
 	if err != nil {
@@ -160,6 +160,14 @@ func TestRoleManagementPostgres(t *testing.T) {
 		t.Fatalf("parse created role: %+v (%v)", created, err)
 	}
 	roleID = created.ID
+	rolePath := fmt.Sprintf("%s/%d", roles, roleID)
+	if location := create.Header().Get("Location"); location != "/api/v1"+rolePath {
+		t.Fatalf("unexpected role location: %q", location)
+	}
+	request(http.MethodGet, rolePath, "", ordinary, http.StatusForbidden)
+	if body := request(http.MethodGet, rolePath, "", manager, http.StatusOK).Body.String(); !strings.Contains(body, roleKey) {
+		t.Fatalf("role detail omitted the created role: %s", body)
+	}
 
 	accountPath := fmt.Sprintf("%s/accounts/user/%d/roles", accessPath, memberID)
 	assignment := fmt.Sprintf("%s/%d", accountPath, roleID)
@@ -170,7 +178,6 @@ func TestRoleManagementPostgres(t *testing.T) {
 	request(http.MethodGet, "/admin/forms", "", member, http.StatusOK)
 	request(http.MethodGet, "/admin/submissions", "", member, http.StatusForbidden)
 
-	rolePath := fmt.Sprintf("%s/%d", roles, roleID)
 	request(http.MethodPut, rolePath, `{"name":"Review helper","permissions":["submissions.review"]}`, manager, http.StatusOK)
 	request(http.MethodGet, "/admin/forms", "", member, http.StatusForbidden)
 	request(http.MethodGet, "/admin/submissions", "", member, http.StatusOK)

@@ -161,14 +161,13 @@ jobs:
           curl --fail --silent --show-error --retry 5 --retry-all-errors --max-time 20 "${PRODUCTION_ORIGIN%/}/" > /dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors --max-time 20 "${PRODUCTION_ORIGIN%/}/api/v1/auth/providers" |
             jq -e '.google | type == "boolean"'
-          for route in user refresh; do
-            method=GET
-            if [[ "$route" == refresh ]]; then method=POST; fi
+          for check in "GET user" "POST refresh" "GET users/me" "POST auth/sessions/current/renewals"; do
+            read -r method route <<< "$check"
             body=$(mktemp)
             for attempt in {1..6}; do
               status=$(curl --silent --show-error --max-time 20 --request "$method" \
                 --output "$body" --write-out '%{http_code}' "${PRODUCTION_ORIGIN%/}/api/v1/$route")
-              if [[ "$status" == 401 ]] && jq -e '.error | type == "string"' "$body" > /dev/null; then
+              if [[ "$status" == 401 ]] && jq -e '.code == "authentication_required" and (.error | type == "string")' "$body" > /dev/null; then
                 break
               fi
               if [[ "$attempt" == 6 ]]; then

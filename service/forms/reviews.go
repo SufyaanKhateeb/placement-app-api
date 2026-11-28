@@ -115,7 +115,7 @@ func (h handler) reviewSubmission(w http.ResponseWriter, r *http.Request) {
         RETURNING status, revision, requested_changes
     `, id, input.Revision, input.Decision, changes).Scan(&result.Status, &result.Revision, &feedback)
 	if err = replaceNoRows(err, errSubmissionChanged); errors.Is(err, errSubmissionChanged) {
-		utils.WriteJsonError(w, http.StatusConflict, err)
+		utils.WriteAPIError(w, http.StatusConflict, "submission_changed", err, nil)
 		return
 	}
 	if err == nil {

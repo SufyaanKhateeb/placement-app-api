@@ -192,15 +192,15 @@ func (s *Store) resendEmailChallenge(ctx context.Context, tokenHash, digest []by
 	return challenge.recipient, tx.Commit(ctx)
 }
 
-func (s *Store) confirmEmailChallenge(ctx context.Context, tokenHash, digest []byte) (int, error) {
+func (s *Store) confirmEmailChallenge(ctx context.Context, tokenHash, digest []byte) (int, bool, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer tx.Rollback(ctx)
 	challenge, err := lockEmailChallenge(ctx, tx, tokenHash)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	var now time.Time
 	var failures int
@@ -209,13 +209,13 @@ func (s *Store) confirmEmailChallenge(ctx context.Context, tokenHash, digest []b
 		FROM email_verifications CROSS JOIN (SELECT clock_timestamp() AS now) time WHERE email = $1
 	`, challenge.email).Scan(&now, &failures)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if !now.Before(challenge.expires) {
-		return 0, errEmailChallengeExpired
+		return 0, false, errEmailChallengeExpired
 	}
 	if failures >= 5 {
-		return 0, errEmailVerificationLimit
+		return 0, false, errEmailVerificationLimit
 	}
 	if !hmac.Equal(challenge.codeDigest, digest) {
 		_, err := tx.Exec(ctx, `
@@ -224,18 +224,18 @@ func (s *Store) confirmEmailChallenge(ctx context.Context, tokenHash, digest []b
 			WHERE email = $1
 		`, challenge.email, now)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return 0, err
+			return 0, false, err
 		}
-		return 0, errEmailCodeInvalid
+		return 0, false, errEmailCodeInvalid
 	}
 
 	var id int
 	if challenge.userID == nil {
 		if err := registrationAvailable(ctx, tx, challenge.email); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		err = tx.QueryRow(ctx, `
 			INSERT INTO app_user (firstname, lastname, email, password)
@@ -248,22 +248,22 @@ func (s *Store) confirmEmailChallenge(ctx context.Context, tokenHash, digest []b
 			FOR UPDATE
 		`, *challenge.userID, challenge.recipient, challenge.passwordHash).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, errEmailChallengeExpired
+			return 0, false, errEmailChallengeExpired
 		}
 	}
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO verified_user_emails (user_id, email) VALUES ($1,$2)
 		ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email
 	`, id, challenge.email); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM email_verification_challenges WHERE email = $1`, challenge.email); err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	return id, tx.Commit(ctx)
+	return id, challenge.userID == nil, tx.Commit(ctx)
 }
 
 func (s *Store) invalidateEmailCode(ctx context.Context, tokenHash, digest []byte) error {
